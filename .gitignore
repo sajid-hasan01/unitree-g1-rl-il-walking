@@ -12,6 +12,7 @@ venv/
 logs/*
 !logs/.gitkeep
 results/*
+third_party/mujoco_menagerie/
 !results/.gitkeep
 
 # Datasets and model checkpoints
