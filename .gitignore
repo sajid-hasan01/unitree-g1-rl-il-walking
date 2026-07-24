@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+venv/
+.env/
+
+# Logs
+logs/*
+!logs/.gitkeep
+results/*
+!results/.gitkeep
+
+# Datasets and model checkpoints
+datasets/*
+!datasets/.gitkeep
+models/*
+!models/.gitkeep
+
+# Large ML files
+*.zip
+*.pt
+*.pth
+*.pkl
+*.npz
+*.npy
+
+# Cache
+.cache/
+*.lock
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
