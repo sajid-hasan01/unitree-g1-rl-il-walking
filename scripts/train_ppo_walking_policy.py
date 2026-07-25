@@ -16,6 +16,8 @@ from envs.g1_dynamic_walking_env import G1DynamicWalkingEnv
 
 def make_env(args, monitor_log):
     env = G1DynamicWalkingEnv(
+        dataset_path=args.dataset_path,
+        reference_mode=args.reference_mode,
         target_forward_velocity=args.target_velocity,
         action_scale=args.action_scale,
         frame_skip=args.frame_skip,
@@ -24,7 +26,7 @@ def make_env(args, monitor_log):
         reference_speed=args.reference_speed,
         initial_stand_steps=args.initial_stand_steps,
         transition_steps=args.transition_steps,
-        random_start=False,
+        random_start=args.random_start,
         enable_push=args.enable_push,
         push_window_start=args.push_window_start,
         push_window_end=args.push_window_end,
@@ -48,6 +50,25 @@ def main():
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--n_epochs", type=int, default=10)
 
+    parser.add_argument(
+        "--dataset_path",
+        type=str,
+        default=os.path.join(
+            "datasets",
+            "processed",
+            "g1_amass_walking_il_15dof.npz",
+        ),
+        help="Processed AMASS IL dataset path.",
+    )
+
+    parser.add_argument(
+        "--reference_mode",
+        type=str,
+        default="transition",
+        choices=["transition", "cyclic"],
+        help="Reference motion mode: transition for stand-to-walk, cyclic for looping walking reference.",
+    )
+
     parser.add_argument("--target_velocity", type=float, default=0.10)
     parser.add_argument("--action_scale", type=float, default=0.05)
     parser.add_argument("--frame_skip", type=int, default=5)
@@ -56,6 +77,12 @@ def main():
     parser.add_argument("--reference_speed", type=float, default=0.15)
     parser.add_argument("--initial_stand_steps", type=int, default=80)
     parser.add_argument("--transition_steps", type=int, default=250)
+
+    parser.add_argument(
+        "--random_start",
+        action="store_true",
+        help="Start each episode at a random reference frame.",
+    )
 
     parser.add_argument(
         "--output",
@@ -75,22 +102,14 @@ def main():
         default=os.path.join("logs", "ppo_walking"),
     )
 
-    parser.add_argument(
-        "--resume",
-        type=str,
-        default=None,
-    )
-
-    parser.add_argument(
-        "--check_env",
-        action="store_true",
-    )
+    parser.add_argument("--resume", type=str, default=None)
+    parser.add_argument("--check_env", action="store_true")
 
     parser.add_argument(
         "--eval_freq",
         type=int,
         default=25_000,
-        help="Timesteps between evaluations of the current policy (for best-model tracking).",
+        help="Timesteps between evaluations of the current policy.",
     )
 
     parser.add_argument(
@@ -100,18 +119,19 @@ def main():
         help="Number of episodes averaged per evaluation.",
     )
 
-    # Push-disturbance (push-recovery) options
     parser.add_argument(
         "--enable_push",
         action="store_true",
-        help="Enable randomized external pushes at the pelvis during training/eval.",
+        help="Enable randomized external pushes at the pelvis.",
     )
+
     parser.add_argument(
         "--push_window_start",
         type=int,
         default=None,
-        help="Episode step after which pushes may begin. Defaults to initial_stand_steps + transition_steps.",
+        help="Episode step after which pushes may begin. Defaults to initial_stand_steps inside the env.",
     )
+
     parser.add_argument("--push_window_end", type=int, default=600)
     parser.add_argument("--push_interval_min", type=int, default=100)
     parser.add_argument("--push_interval_max", type=int, default=200)
@@ -120,6 +140,9 @@ def main():
     parser.add_argument("--push_duration_steps", type=int, default=5)
 
     args = parser.parse_args()
+
+    if not os.path.exists(args.dataset_path):
+        raise FileNotFoundError(f"Dataset not found: {args.dataset_path}")
 
     os.makedirs(os.path.dirname(args.output), exist_ok=True)
     os.makedirs(args.checkpoint_dir, exist_ok=True)
@@ -195,20 +218,25 @@ def main():
 
     print()
     print("Starting PPO walking training")
+    print("Dataset path:", args.dataset_path)
+    print("Reference mode:", args.reference_mode)
     print("Total timesteps:", args.total_timesteps)
     print("Target velocity:", args.target_velocity)
     print("Action scale:", args.action_scale)
     print("Reference speed:", args.reference_speed)
     print("Initial stand steps:", args.initial_stand_steps)
     print("Transition steps:", args.transition_steps)
+    print("Random start:", args.random_start)
     print("Eval freq:", args.eval_freq)
     print("Best model save path:", best_model_dir)
     print("Push enabled:", args.enable_push)
+
     if args.enable_push:
         print("Push window:", args.push_window_start, "to", args.push_window_end)
         print("Push force range:", args.push_force_min, "to", args.push_force_max)
         print("Push interval range:", args.push_interval_min, "to", args.push_interval_max)
         print("Push duration steps:", args.push_duration_steps)
+
     print("Output:", args.output)
     print()
 
@@ -227,7 +255,10 @@ def main():
     print()
     print("PPO walking training complete.")
     print("Saved final model:", args.output)
-    print("Best model (by periodic eval) saved at:", os.path.join(best_model_dir, "best_model.zip"))
+    print(
+        "Best model saved at:",
+        os.path.join(best_model_dir, "best_model.zip"),
+    )
 
 
 if __name__ == "__main__":

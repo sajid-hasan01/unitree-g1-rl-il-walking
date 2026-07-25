@@ -14,6 +14,7 @@ class G1DynamicWalkingEnv(gym.Env):
         self,
         model_path=None,
         dataset_path=None,
+        reference_mode="transition",
         target_forward_velocity=0.15,
         action_scale=0.10,
         frame_skip=5,
@@ -55,6 +56,15 @@ class G1DynamicWalkingEnv(gym.Env):
 
         self.model_path = str(model_path)
         self.dataset_path = str(dataset_path)
+        self.reference_mode = str(reference_mode).lower().strip()
+
+        valid_reference_modes = {"transition", "cyclic"}
+
+        if self.reference_mode not in valid_reference_modes:
+            raise ValueError(
+                f"Invalid reference_mode: {self.reference_mode}. "
+                f"Expected one of: {sorted(valid_reference_modes)}"
+            )
 
         if not os.path.exists(self.model_path):
             raise FileNotFoundError(f"MuJoCo model not found: {self.model_path}")
@@ -65,17 +75,34 @@ class G1DynamicWalkingEnv(gym.Env):
         self.model = mujoco.MjModel.from_xml_path(self.model_path)
         self.data = mujoco.MjData(self.model)
 
+        if self.model.nkey > 0:
+            self.stand_qpos = self.model.key_qpos[0].copy()
+        else:
+            self.stand_qpos = np.zeros(self.model.nq, dtype=np.float64)
+            self.stand_qpos[3] = 1.0
+
         dataset = np.load(self.dataset_path, allow_pickle=True)
 
         self.fps = float(dataset["fps"][0])
         self.reference_joint_positions = dataset["joint_pos_15"].astype(np.float32)
         self.reference_joint_velocities = dataset["joint_vel_15"].astype(np.float32)
-        self.reference_root_positions = dataset["root_positions"].astype(np.float32)
+
+        self.num_frames = self.reference_joint_positions.shape[0]
+
+        if "root_positions" in dataset:
+            self.reference_root_positions = dataset["root_positions"].astype(np.float32)
+            self.has_reference_root_positions = True
+        else:
+            self.reference_root_positions = np.zeros((self.num_frames, 3), dtype=np.float32)
+            self.reference_root_positions[:, 0] = 0.0
+            self.reference_root_positions[:, 1] = 0.0
+            self.reference_root_positions[:, 2] = float(self.stand_qpos[2])
+            self.has_reference_root_positions = False
+
         self.controlled_joint_names = [
             str(name) for name in dataset["controlled_joint_names"]
         ]
 
-        self.num_frames = self.reference_joint_positions.shape[0]
         self.num_actions = len(self.controlled_joint_names)
 
         self.target_forward_velocity = float(target_forward_velocity)
@@ -88,16 +115,14 @@ class G1DynamicWalkingEnv(gym.Env):
         self.transition_steps = int(transition_steps)
         self.random_start = bool(random_start)
 
-        # Push-disturbance (push-recovery) settings — opt-in, off by default.
         self.enable_push = bool(enable_push)
-        # Default: pushes may begin shortly after the stand-to-walk transition
-        # starts (walking motion is already visible well before the blend
-        # fully completes at initial_stand_steps + transition_steps).
+
         self.push_window_start = (
             int(push_window_start)
             if push_window_start is not None
             else self.initial_stand_steps
         )
+
         self.push_window_end = int(push_window_end)
         self.push_interval_min = int(push_interval_min)
         self.push_interval_max = int(push_interval_max)
@@ -106,12 +131,6 @@ class G1DynamicWalkingEnv(gym.Env):
         self.push_duration_steps = int(push_duration_steps)
 
         self.control_dt = self.model.opt.timestep * self.frame_skip
-
-        if self.model.nkey > 0:
-            self.stand_qpos = self.model.key_qpos[0].copy()
-        else:
-            self.stand_qpos = np.zeros(self.model.nq, dtype=np.float64)
-            self.stand_qpos[3] = 1.0
 
         self.joint_qpos_addresses = []
         self.joint_qvel_addresses = []
@@ -190,7 +209,6 @@ class G1DynamicWalkingEnv(gym.Env):
         self.previous_action = np.zeros(self.num_actions, dtype=np.float32)
         self.last_targets = np.zeros(self.num_actions, dtype=np.float32)
 
-        # Push state
         self.next_push_step = None
         self.push_remaining_steps = 0
         self.current_push_force = np.zeros(3, dtype=np.float64)
@@ -282,6 +300,16 @@ class G1DynamicWalkingEnv(gym.Env):
 
         return blended_joint_pos.astype(np.float32)
 
+    def _get_reference_height_for_step(self):
+        if self.episode_step < self.initial_stand_steps:
+            return float(self.stand_qpos[2])
+
+        if self.has_reference_root_positions:
+            _, _, ref_root_pos = self._interpolate_reference(self.motion_frame)
+            return float(ref_root_pos[2] + self.height_offset)
+
+        return float(self.stand_qpos[2] + self.height_offset)
+
     def _build_observation(self):
         ref_joint_pos = self._get_reference_joint_positions_for_step()
 
@@ -344,14 +372,12 @@ class G1DynamicWalkingEnv(gym.Env):
         self.last_targets = applied_targets
 
     def _schedule_next_push(self):
-        # Anchor scheduling to the window start (not episode_step, which is
-        # 0 at reset) so the first candidate always lands inside the push
-        # window instead of before it, where it could never fire.
         base_step = max(self.episode_step, self.push_window_start)
 
         interval = int(
             self.np_random.integers(self.push_interval_min, self.push_interval_max + 1)
         )
+
         candidate = base_step + interval
 
         if candidate > self.push_window_end:
@@ -383,7 +409,9 @@ class G1DynamicWalkingEnv(gym.Env):
                 ],
                 dtype=np.float64,
             )
+
             self.push_remaining_steps = self.push_duration_steps
+
             self.last_push_info = {
                 "push_active": True,
                 "push_force_magnitude": magnitude,
@@ -401,7 +429,6 @@ class G1DynamicWalkingEnv(gym.Env):
 
     def _compute_reward(self, action):
         ref_joint_pos = self._get_reference_joint_positions_for_step()
-        _, _, ref_root_pos = self._interpolate_reference(self.motion_frame)
 
         joint_pos = self._get_joint_positions()
 
@@ -413,12 +440,12 @@ class G1DynamicWalkingEnv(gym.Env):
 
         if self.episode_step < self.initial_stand_steps:
             desired_velocity = 0.0
-            reference_height = float(self.stand_qpos[2])
             direction_sign = 0.0
         else:
             desired_velocity = self.target_forward_velocity
-            reference_height = float(ref_root_pos[2] + self.height_offset)
             direction_sign = 1.0 if self.target_forward_velocity >= 0.0 else -1.0
+
+        reference_height = self._get_reference_height_for_step()
 
         tracking_error = np.mean((joint_pos - ref_joint_pos) ** 2)
 
@@ -433,10 +460,12 @@ class G1DynamicWalkingEnv(gym.Env):
         progress_reward = float(
             np.clip(directional_velocity, 0.0, target_speed_magnitude)
         )
+
         wrong_direction_penalty = 2.5 * max(-directional_velocity, 0.0)
 
         overspeed_penalty = 1.5 * max(
-            directional_velocity - target_speed_magnitude, 0.0
+            directional_velocity - target_speed_magnitude,
+            0.0,
         )
 
         lateral_penalty = 0.60 * abs(base_y) + 0.10 * abs(lateral_velocity)
@@ -534,12 +563,15 @@ class G1DynamicWalkingEnv(gym.Env):
         observation = self._build_observation()
 
         info = {
+            "reference_mode": self.reference_mode,
+            "dataset_path": self.dataset_path,
             "motion_frame": self.motion_frame,
             "base_height": float(self.data.qpos[2]),
             "up_z": self._get_up_z(),
             "upper_body_joints_held": len(self.upper_body_actuators),
             "push_active": False,
             "push_force_magnitude": 0.0,
+            "has_reference_root_positions": self.has_reference_root_positions,
         }
 
         return observation, info
@@ -573,6 +605,7 @@ class G1DynamicWalkingEnv(gym.Env):
         observation = self._build_observation()
 
         info = {
+            "reference_mode": self.reference_mode,
             "x_position": float(self.data.qpos[0]),
             "y_position": float(self.data.qpos[1]),
             "base_height": float(self.data.qpos[2]),
@@ -583,6 +616,7 @@ class G1DynamicWalkingEnv(gym.Env):
             "upper_body_joints_held": len(self.upper_body_actuators),
             "push_active": bool(self.last_push_info["push_active"]),
             "push_force_magnitude": float(self.last_push_info["push_force_magnitude"]),
+            "has_reference_root_positions": self.has_reference_root_positions,
         }
 
         self.previous_action = action.copy()
