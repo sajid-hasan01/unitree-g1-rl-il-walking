@@ -26,6 +26,25 @@ def main():
     parser.add_argument("--initial_stand_steps", type=int, default=80)
     parser.add_argument("--transition_steps", type=int, default=250)
 
+    # Reference dataset / mode options
+    parser.add_argument(
+        "--dataset_path",
+        type=str,
+        default=None,
+        help="Path to the IL dataset .npz file. Defaults to the standard transition dataset if not given.",
+    )
+    parser.add_argument(
+        "--reference_mode",
+        type=str,
+        default="transition",
+        choices=["transition", "cyclic"],
+    )
+    parser.add_argument(
+        "--random_start",
+        action="store_true",
+        help="Start the reference motion at a random frame instead of frame 0.",
+    )
+
     # Push-disturbance (push-recovery) options
     parser.add_argument(
         "--enable_push",
@@ -36,7 +55,7 @@ def main():
         "--push_window_start",
         type=int,
         default=None,
-        help="Episode step after which pushes may begin. Defaults to initial_stand_steps + transition_steps.",
+        help="Episode step after which pushes may begin. Defaults to initial_stand_steps.",
     )
     parser.add_argument("--push_window_end", type=int, default=600)
     parser.add_argument("--push_interval_min", type=int, default=100)
@@ -50,6 +69,8 @@ def main():
     if not model_path.exists():
         raise FileNotFoundError(f"PPO model not found: {model_path}")
     env = G1DynamicWalkingEnv(
+        dataset_path=args.dataset_path,
+        reference_mode=args.reference_mode,
         target_forward_velocity=args.target_velocity,
         action_scale=args.action_scale,
         frame_skip=args.frame_skip,
@@ -57,7 +78,7 @@ def main():
         reference_speed=args.reference_speed,
         initial_stand_steps=args.initial_stand_steps,
         transition_steps=args.transition_steps,
-        random_start=False,
+        random_start=args.random_start,
         enable_push=args.enable_push,
         push_window_start=args.push_window_start,
         push_window_end=args.push_window_end,
@@ -73,6 +94,9 @@ def main():
     print("Model:", model_path)
     print("Observation shape:", observation.shape)
     print("Action shape:", env.action_space.shape)
+    print("Reference mode:", env.reference_mode)
+    print("Dataset path:", env.dataset_path)
+    print("Has reference root positions:", env.has_reference_root_positions)
     print("Push enabled:", args.enable_push)
     if args.enable_push:
         print("Push window:", env.push_window_start, "to", env.push_window_end)
