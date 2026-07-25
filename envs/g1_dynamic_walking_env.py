@@ -23,6 +23,14 @@ class G1DynamicWalkingEnv(gym.Env):
         initial_stand_steps=80,
         transition_steps=120,
         random_start=False,
+        enable_push=False,
+        push_window_start=None,
+        push_window_end=600,
+        push_interval_min=100,
+        push_interval_max=200,
+        push_force_min=20.0,
+        push_force_max=60.0,
+        push_duration_steps=5,
     ):
         super().__init__()
 
@@ -79,6 +87,23 @@ class G1DynamicWalkingEnv(gym.Env):
         self.initial_stand_steps = int(initial_stand_steps)
         self.transition_steps = int(transition_steps)
         self.random_start = bool(random_start)
+
+        # Push-disturbance (push-recovery) settings — opt-in, off by default.
+        self.enable_push = bool(enable_push)
+        # Default: pushes may begin shortly after the stand-to-walk transition
+        # starts (walking motion is already visible well before the blend
+        # fully completes at initial_stand_steps + transition_steps).
+        self.push_window_start = (
+            int(push_window_start)
+            if push_window_start is not None
+            else self.initial_stand_steps
+        )
+        self.push_window_end = int(push_window_end)
+        self.push_interval_min = int(push_interval_min)
+        self.push_interval_max = int(push_interval_max)
+        self.push_force_min = float(push_force_min)
+        self.push_force_max = float(push_force_max)
+        self.push_duration_steps = int(push_duration_steps)
 
         self.control_dt = self.model.opt.timestep * self.frame_skip
 
@@ -141,14 +166,12 @@ class G1DynamicWalkingEnv(gym.Env):
                 continue
 
             qpos_address = self.model.jnt_qposadr[joint_id]
-            qvel_address = self.model.jnt_dofadr[joint_id]
 
             self.upper_body_actuators.append(
                 {
                     "name": actuator_name,
                     "actuator_id": actuator_id,
                     "qpos_address": qpos_address,
-                    "qvel_address": qvel_address,
                     "target_qpos": float(self.stand_qpos[qpos_address]),
                 }
             )
@@ -162,55 +185,16 @@ class G1DynamicWalkingEnv(gym.Env):
         if self.pelvis_body_id < 0:
             raise ValueError("Pelvis body not found.")
 
-        self.kp = np.array(
-            [
-                120.0,
-                90.0,
-                60.0,
-                140.0,
-                65.0,
-                45.0,
-                120.0,
-                90.0,
-                60.0,
-                140.0,
-                65.0,
-                45.0,
-                80.0,
-                80.0,
-                80.0,
-            ],
-            dtype=np.float32,
-        )
-
-        self.kd = np.array(
-            [
-                5.0,
-                4.0,
-                3.0,
-                6.0,
-                3.0,
-                2.5,
-                5.0,
-                4.0,
-                3.0,
-                6.0,
-                3.0,
-                2.5,
-                3.0,
-                3.0,
-                3.0,
-            ],
-            dtype=np.float32,
-        )
-
-        self.upper_kp = 35.0
-        self.upper_kd = 2.0
-
         self.episode_step = 0
         self.motion_frame = 0.0
         self.previous_action = np.zeros(self.num_actions, dtype=np.float32)
-        self.last_torque = np.zeros(self.num_actions, dtype=np.float32)
+        self.last_targets = np.zeros(self.num_actions, dtype=np.float32)
+
+        # Push state
+        self.next_push_step = None
+        self.push_remaining_steps = 0
+        self.current_push_force = np.zeros(3, dtype=np.float64)
+        self.last_push_info = {"push_active": False, "push_force_magnitude": 0.0}
 
         self.action_space = spaces.Box(
             low=-1.0,
@@ -337,33 +321,84 @@ class G1DynamicWalkingEnv(gym.Env):
         ctrl_min, ctrl_max = self.model.actuator_ctrlrange[actuator_id]
         return float(np.clip(value, ctrl_min, ctrl_max))
 
-    def _apply_pd_control(self, action):
+    def _apply_position_control(self, action):
         ref_joint_pos = self._get_reference_joint_positions_for_step()
 
         if self.episode_step < self.initial_stand_steps:
             action = np.zeros_like(action, dtype=np.float32)
 
         target_joint_pos = ref_joint_pos + self.action_scale * action
-
         applied_targets = np.zeros(self.num_actions, dtype=np.float32)
 
         for i, actuator_id in enumerate(self.actuator_ids):
-            ctrl_min, ctrl_max = self.model.actuator_ctrlrange[actuator_id]
-            target = np.clip(target_joint_pos[i], ctrl_min, ctrl_max)
-
+            target = self._clip_ctrl(actuator_id, target_joint_pos[i])
             self.data.ctrl[actuator_id] = target
             applied_targets[i] = target
 
         for item in self.upper_body_actuators:
             actuator_id = item["actuator_id"]
             target_qpos = item["target_qpos"]
-
-            ctrl_min, ctrl_max = self.model.actuator_ctrlrange[actuator_id]
-            target = np.clip(target_qpos, ctrl_min, ctrl_max)
-
+            target = self._clip_ctrl(actuator_id, target_qpos)
             self.data.ctrl[actuator_id] = target
 
-            self.last_torque = applied_targets
+        self.last_targets = applied_targets
+
+    def _schedule_next_push(self):
+        # Anchor scheduling to the window start (not episode_step, which is
+        # 0 at reset) so the first candidate always lands inside the push
+        # window instead of before it, where it could never fire.
+        base_step = max(self.episode_step, self.push_window_start)
+
+        interval = int(
+            self.np_random.integers(self.push_interval_min, self.push_interval_max + 1)
+        )
+        candidate = base_step + interval
+
+        if candidate > self.push_window_end:
+            self.next_push_step = None
+        else:
+            self.next_push_step = candidate
+
+    def _maybe_start_push(self):
+        if not self.enable_push:
+            return
+
+        if self.next_push_step is None:
+            return
+
+        if self.episode_step < self.push_window_start:
+            return
+
+        if self.episode_step == self.next_push_step:
+            angle = float(self.np_random.uniform(0.0, 2.0 * np.pi))
+            magnitude = float(
+                self.np_random.uniform(self.push_force_min, self.push_force_max)
+            )
+
+            self.current_push_force = np.array(
+                [
+                    magnitude * np.cos(angle),
+                    magnitude * np.sin(angle),
+                    0.0,
+                ],
+                dtype=np.float64,
+            )
+            self.push_remaining_steps = self.push_duration_steps
+            self.last_push_info = {
+                "push_active": True,
+                "push_force_magnitude": magnitude,
+            }
+
+            self._schedule_next_push()
+
+    def _apply_push_force(self):
+        if self.push_remaining_steps > 0:
+            self.data.xfrc_applied[self.pelvis_body_id, 0:3] = self.current_push_force
+            self.data.xfrc_applied[self.pelvis_body_id, 3:6] = 0.0
+        else:
+            self.data.xfrc_applied[self.pelvis_body_id, :] = 0.0
+            self.last_push_info["push_active"] = False
+
     def _compute_reward(self, action):
         ref_joint_pos = self._get_reference_joint_positions_for_step()
         _, _, ref_root_pos = self._interpolate_reference(self.motion_frame)
@@ -379,30 +414,57 @@ class G1DynamicWalkingEnv(gym.Env):
         if self.episode_step < self.initial_stand_steps:
             desired_velocity = 0.0
             reference_height = float(self.stand_qpos[2])
+            direction_sign = 0.0
         else:
             desired_velocity = self.target_forward_velocity
             reference_height = float(ref_root_pos[2] + self.height_offset)
+            direction_sign = 1.0 if self.target_forward_velocity >= 0.0 else -1.0
 
         tracking_error = np.mean((joint_pos - ref_joint_pos) ** 2)
 
         tracking_reward = np.exp(-tracking_error / 0.08)
-        velocity_reward = np.exp(-((forward_velocity - desired_velocity) ** 2) / 0.20)
+        velocity_reward = np.exp(-((forward_velocity - desired_velocity) ** 2) / 0.08)
         upright_reward = np.clip(up_z, 0.0, 1.0)
-        height_reward = np.exp(-((base_height - reference_height) ** 2) / 0.04)
+        height_reward = np.exp(-((base_height - reference_height) ** 2) / 0.025)
 
-        lateral_penalty = 0.20 * abs(base_y) + 0.05 * abs(lateral_velocity)
-        action_penalty = 0.02 * np.mean(action ** 2)
-        smoothness_penalty = 0.02 * np.mean((action - self.previous_action) ** 2)
+        directional_velocity = direction_sign * forward_velocity
+        target_speed_magnitude = abs(self.target_forward_velocity)
+
+        progress_reward = float(
+            np.clip(directional_velocity, 0.0, target_speed_magnitude)
+        )
+        wrong_direction_penalty = 2.5 * max(-directional_velocity, 0.0)
+
+        overspeed_penalty = 1.5 * max(
+            directional_velocity - target_speed_magnitude, 0.0
+        )
+
+        lateral_penalty = 0.60 * abs(base_y) + 0.10 * abs(lateral_velocity)
+        action_penalty = 0.03 * np.mean(action ** 2)
+        smoothness_penalty = 0.04 * np.mean((action - self.previous_action) ** 2)
+
+        low_height_penalty = 0.0
+        if base_height < 0.65:
+            low_height_penalty = 2.0 * (0.65 - base_height)
+
+        tilt_penalty = 0.0
+        if up_z < 0.85:
+            tilt_penalty = 2.0 * (0.85 - up_z)
 
         reward = (
-            1.50 * tracking_reward
-            + 1.00 * velocity_reward
-            + 1.20 * upright_reward
-            + 0.80 * height_reward
+            1.20 * tracking_reward
+            + 1.40 * velocity_reward
+            + 1.80 * upright_reward
+            + 1.20 * height_reward
+            + 1.20 * progress_reward
             + 0.20
+            - wrong_direction_penalty
+            - overspeed_penalty
             - lateral_penalty
             - action_penalty
             - smoothness_penalty
+            - low_height_penalty
+            - tilt_penalty
         )
 
         return float(reward)
@@ -432,7 +494,17 @@ class G1DynamicWalkingEnv(gym.Env):
 
         self.episode_step = 0
         self.previous_action = np.zeros(self.num_actions, dtype=np.float32)
-        self.last_torque = np.zeros(self.num_actions, dtype=np.float32)
+        self.last_targets = np.zeros(self.num_actions, dtype=np.float32)
+
+        self.push_remaining_steps = 0
+        self.current_push_force = np.zeros(3, dtype=np.float64)
+        self.last_push_info = {"push_active": False, "push_force_magnitude": 0.0}
+        self.data.xfrc_applied[:, :] = 0.0
+
+        if self.enable_push:
+            self._schedule_next_push()
+        else:
+            self.next_push_step = None
 
         if self.random_start:
             self.motion_frame = float(self.np_random.integers(0, self.num_frames))
@@ -466,6 +538,8 @@ class G1DynamicWalkingEnv(gym.Env):
             "base_height": float(self.data.qpos[2]),
             "up_z": self._get_up_z(),
             "upper_body_joints_held": len(self.upper_body_actuators),
+            "push_active": False,
+            "push_force_magnitude": 0.0,
         }
 
         return observation, info
@@ -474,9 +548,15 @@ class G1DynamicWalkingEnv(gym.Env):
         action = np.asarray(action, dtype=np.float32)
         action = np.clip(action, -1.0, 1.0)
 
+        self._maybe_start_push()
+
         for _ in range(self.frame_skip):
-            self._apply_pd_control(action)
+            self._apply_position_control(action)
+            self._apply_push_force()
             mujoco.mj_step(self.model, self.data)
+
+        if self.push_remaining_steps > 0:
+            self.push_remaining_steps -= 1
 
         if self.episode_step >= self.initial_stand_steps:
             self.motion_frame += self.control_dt * self.fps * self.reference_speed
@@ -501,6 +581,8 @@ class G1DynamicWalkingEnv(gym.Env):
             "motion_frame": self.motion_frame,
             "reward": reward,
             "upper_body_joints_held": len(self.upper_body_actuators),
+            "push_active": bool(self.last_push_info["push_active"]),
+            "push_force_magnitude": float(self.last_push_info["push_force_magnitude"]),
         }
 
         self.previous_action = action.copy()
