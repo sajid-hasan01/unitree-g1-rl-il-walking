@@ -204,6 +204,66 @@ class G1DynamicWalkingEnv(gym.Env):
         if self.pelvis_body_id < 0:
             raise ValueError("Pelvis body not found.")
 
+        self.left_foot_site_id = mujoco.mj_name2id(
+            self.model,
+            mujoco.mjtObj.mjOBJ_SITE,
+            "left_foot",
+        )
+
+        self.right_foot_site_id = mujoco.mj_name2id(
+            self.model,
+            mujoco.mjtObj.mjOBJ_SITE,
+            "right_foot",
+        )
+
+        if self.left_foot_site_id < 0:
+            raise ValueError("left_foot site not found.")
+
+        if self.right_foot_site_id < 0:
+            raise ValueError("right_foot site not found.")
+
+        self.left_foot_body_ids = set()
+        self.right_foot_body_ids = set()
+
+        for body_name in ["left_ankle_pitch_link", "left_ankle_roll_link"]:
+            body_id = mujoco.mj_name2id(
+                self.model,
+                mujoco.mjtObj.mjOBJ_BODY,
+                body_name,
+            )
+
+            if body_id >= 0:
+                self.left_foot_body_ids.add(int(body_id))
+
+        for body_name in ["right_ankle_pitch_link", "right_ankle_roll_link"]:
+            body_id = mujoco.mj_name2id(
+                self.model,
+                mujoco.mjtObj.mjOBJ_BODY,
+                body_name,
+            )
+
+            if body_id >= 0:
+                self.right_foot_body_ids.add(int(body_id))
+
+        if len(self.left_foot_body_ids) == 0:
+            raise ValueError("No left foot body IDs found.")
+
+        if len(self.right_foot_body_ids) == 0:
+            raise ValueError("No right foot body IDs found.")
+
+        self.previous_left_foot_pos = np.zeros(3, dtype=np.float64)
+        self.previous_right_foot_pos = np.zeros(3, dtype=np.float64)
+        self.ground_foot_height = 0.0
+
+        self.last_foot_info = {
+            "left_contact": False,
+            "right_contact": False,
+            "left_foot_slip": 0.0,
+            "right_foot_slip": 0.0,
+            "left_foot_clearance": 0.0,
+            "right_foot_clearance": 0.0,
+        }
+
         self.episode_step = 0
         self.motion_frame = 0.0
         self.previous_action = np.zeros(self.num_actions, dtype=np.float32)
@@ -282,6 +342,73 @@ class G1DynamicWalkingEnv(gym.Env):
 
     def _get_up_z(self):
         return float(self.data.xmat[self.pelvis_body_id, 8])
+
+    def _get_site_position(self, site_id):
+        return self.data.site_xpos[site_id].copy()
+
+    def _get_foot_contacts(self):
+        left_contact = False
+        right_contact = False
+
+        for contact_id in range(self.data.ncon):
+            contact = self.data.contact[contact_id]
+
+            geom_1 = int(contact.geom1)
+            geom_2 = int(contact.geom2)
+
+            body_1 = int(self.model.geom_bodyid[geom_1])
+            body_2 = int(self.model.geom_bodyid[geom_2])
+
+            if body_1 in self.left_foot_body_ids or body_2 in self.left_foot_body_ids:
+                left_contact = True
+
+            if body_1 in self.right_foot_body_ids or body_2 in self.right_foot_body_ids:
+                right_contact = True
+
+        return left_contact, right_contact
+
+    def _get_foot_metrics(self):
+        left_pos = self._get_site_position(self.left_foot_site_id)
+        right_pos = self._get_site_position(self.right_foot_site_id)
+
+        left_vel = (
+            left_pos - self.previous_left_foot_pos
+        ) / max(self.control_dt, 1e-6)
+
+        right_vel = (
+            right_pos - self.previous_right_foot_pos
+        ) / max(self.control_dt, 1e-6)
+
+        left_contact, right_contact = self._get_foot_contacts()
+
+        left_foot_slip = 0.0
+        right_foot_slip = 0.0
+
+        if left_contact:
+            left_foot_slip = float(np.linalg.norm(left_vel[:2]))
+
+        if right_contact:
+            right_foot_slip = float(np.linalg.norm(right_vel[:2]))
+
+        left_foot_clearance = float(max(left_pos[2] - self.ground_foot_height, 0.0))
+        right_foot_clearance = float(max(right_pos[2] - self.ground_foot_height, 0.0))
+
+        foot_info = {
+            "left_contact": bool(left_contact),
+            "right_contact": bool(right_contact),
+            "left_foot_slip": left_foot_slip,
+            "right_foot_slip": right_foot_slip,
+            "left_foot_clearance": left_foot_clearance,
+            "right_foot_clearance": right_foot_clearance,
+        }
+
+        self.last_foot_info = foot_info
+
+        return foot_info
+
+    def _update_previous_foot_positions(self):
+        self.previous_left_foot_pos = self._get_site_position(self.left_foot_site_id)
+        self.previous_right_foot_pos = self._get_site_position(self.right_foot_site_id)
 
     def _get_reference_joint_positions_for_step(self):
         stand_joint_pos = self._get_stand_joint_positions()
@@ -431,69 +558,177 @@ class G1DynamicWalkingEnv(gym.Env):
         ref_joint_pos = self._get_reference_joint_positions_for_step()
 
         joint_pos = self._get_joint_positions()
+        joint_vel = self._get_joint_velocities()
 
         base_height = float(self.data.qpos[2])
         base_y = float(self.data.qpos[1])
+
         forward_velocity = float(self.data.qvel[0])
         lateral_velocity = float(self.data.qvel[1])
+
         up_z = self._get_up_z()
+        reference_height = self._get_reference_height_for_step()
+
+        foot_info = self._get_foot_metrics()
+
+        left_contact = foot_info["left_contact"]
+        right_contact = foot_info["right_contact"]
+
+        left_foot_slip = foot_info["left_foot_slip"]
+        right_foot_slip = foot_info["right_foot_slip"]
+
+        left_foot_clearance = foot_info["left_foot_clearance"]
+        right_foot_clearance = foot_info["right_foot_clearance"]
 
         if self.episode_step < self.initial_stand_steps:
+            transition_alpha = 0.0
             desired_velocity = 0.0
             direction_sign = 0.0
         else:
-            desired_velocity = self.target_forward_velocity
+            transition_step = self.episode_step - self.initial_stand_steps
+            transition_alpha = self._smoothstep(
+                transition_step / max(self.transition_steps, 1)
+            )
+            desired_velocity = self.target_forward_velocity * transition_alpha
             direction_sign = 1.0 if self.target_forward_velocity >= 0.0 else -1.0
 
-        reference_height = self._get_reference_height_for_step()
-
-        tracking_error = np.mean((joint_pos - ref_joint_pos) ** 2)
-
-        tracking_reward = np.exp(-tracking_error / 0.08)
-        velocity_reward = np.exp(-((forward_velocity - desired_velocity) ** 2) / 0.08)
-        upright_reward = np.clip(up_z, 0.0, 1.0)
-        height_reward = np.exp(-((base_height - reference_height) ** 2) / 0.025)
+        target_speed = abs(desired_velocity)
+        allowed_speed = max(target_speed + 0.04, 0.06)
 
         directional_velocity = direction_sign * forward_velocity
-        target_speed_magnitude = abs(self.target_forward_velocity)
 
-        progress_reward = float(
-            np.clip(directional_velocity, 0.0, target_speed_magnitude)
+        tracking_error = np.mean((joint_pos - ref_joint_pos) ** 2)
+        tracking_reward = np.exp(-tracking_error / 0.07)
+
+        velocity_error = forward_velocity - desired_velocity
+        velocity_reward = np.exp(-(velocity_error ** 2) / 0.018)
+
+        upright_reward = np.clip(up_z, 0.0, 1.0)
+
+        height_error = base_height - reference_height
+        height_reward = np.exp(-(height_error ** 2) / 0.018)
+
+        if transition_alpha > 0.25:
+            progress_reward = float(
+                np.clip(directional_velocity, 0.0, target_speed)
+            )
+        else:
+            progress_reward = 0.0
+
+        wrong_direction_penalty = 5.0 * max(-directional_velocity, 0.0)
+
+        overspeed = max(directional_velocity - allowed_speed, 0.0)
+
+        overspeed_penalty = (
+            8.0 * overspeed
+            + 4.0 * (overspeed ** 2)
         )
 
-        wrong_direction_penalty = 2.5 * max(-directional_velocity, 0.0)
+        absolute_forward_speed = abs(forward_velocity)
+        high_speed_penalty = 3.0 * max(absolute_forward_speed - 0.35, 0.0)
 
-        overspeed_penalty = 1.5 * max(
-            directional_velocity - target_speed_magnitude,
-            0.0,
+        lateral_position_penalty = 3.0 * (base_y ** 2) + 0.8 * abs(base_y)
+
+        lateral_velocity_penalty = (
+            2.0 * (lateral_velocity ** 2)
+            + 0.6 * abs(lateral_velocity)
         )
 
-        lateral_penalty = 0.60 * abs(base_y) + 0.10 * abs(lateral_velocity)
-        action_penalty = 0.03 * np.mean(action ** 2)
-        smoothness_penalty = 0.04 * np.mean((action - self.previous_action) ** 2)
+        action_penalty = 0.08 * np.mean(action ** 2)
+        smoothness_penalty = 0.14 * np.mean((action - self.previous_action) ** 2)
+        joint_velocity_penalty = 0.002 * np.mean(joint_vel ** 2)
 
         low_height_penalty = 0.0
-        if base_height < 0.65:
-            low_height_penalty = 2.0 * (0.65 - base_height)
+        if base_height < 0.72:
+            low_height_penalty = 5.0 * (0.72 - base_height)
 
         tilt_penalty = 0.0
-        if up_z < 0.85:
-            tilt_penalty = 2.0 * (0.85 - up_z)
+        if up_z < 0.92:
+            tilt_penalty = 5.0 * (0.92 - up_z)
+
+        collapse_penalty = 0.0
+        if self.episode_step >= self.initial_stand_steps and base_height < 0.70:
+            collapse_penalty = 4.0 * (0.70 - base_height)
+
+        contact_count = int(left_contact) + int(right_contact)
+
+        no_contact_penalty = 0.0
+        double_flight_penalty = 0.0
+        single_support_reward = 0.0
+        double_support_reward = 0.0
+
+        if self.episode_step >= self.initial_stand_steps:
+            if contact_count == 0:
+                no_contact_penalty = 2.0
+
+            if transition_alpha > 0.35:
+                if contact_count == 1:
+                    single_support_reward = 0.35
+                elif contact_count == 2:
+                    double_support_reward = 0.10
+                else:
+                    double_flight_penalty = 1.0
+
+        foot_slip_penalty = 0.0
+
+        if transition_alpha > 0.15:
+            foot_slip_penalty = 2.5 * (
+                left_foot_slip
+                + right_foot_slip
+            )
+
+        foot_clearance_reward = 0.0
+
+        if transition_alpha > 0.35:
+            clearance_target = 0.035
+
+            if not left_contact:
+                foot_clearance_reward += min(
+                    left_foot_clearance / clearance_target,
+                    1.0,
+                )
+
+            if not right_contact:
+                foot_clearance_reward += min(
+                    right_foot_clearance / clearance_target,
+                    1.0,
+                )
+
+            foot_clearance_reward *= 0.15
+
+        excessive_clearance_penalty = 0.0
+
+        if transition_alpha > 0.35:
+            excessive_clearance_penalty = 1.0 * (
+                max(left_foot_clearance - 0.16, 0.0)
+                + max(right_foot_clearance - 0.16, 0.0)
+            )
 
         reward = (
-            1.20 * tracking_reward
-            + 1.40 * velocity_reward
-            + 1.80 * upright_reward
-            + 1.20 * height_reward
-            + 1.20 * progress_reward
-            + 0.20
+            1.30 * tracking_reward
+            + 1.80 * velocity_reward
+            + 2.20 * upright_reward
+            + 1.50 * height_reward
+            + 0.20 * progress_reward
+            + single_support_reward
+            + double_support_reward
+            + foot_clearance_reward
+            + 0.15
             - wrong_direction_penalty
             - overspeed_penalty
-            - lateral_penalty
+            - high_speed_penalty
+            - lateral_position_penalty
+            - lateral_velocity_penalty
             - action_penalty
             - smoothness_penalty
+            - joint_velocity_penalty
             - low_height_penalty
             - tilt_penalty
+            - collapse_penalty
+            - no_contact_penalty
+            - double_flight_penalty
+            - foot_slip_penalty
+            - excessive_clearance_penalty
         )
 
         return float(reward)
@@ -503,6 +738,9 @@ class G1DynamicWalkingEnv(gym.Env):
             return False
 
         base_height = float(self.data.qpos[2])
+        base_y = float(self.data.qpos[1])
+        forward_velocity = float(self.data.qvel[0])
+        lateral_velocity = float(self.data.qvel[1])
         up_z = self._get_up_z()
 
         if base_height < 0.35:
@@ -513,6 +751,24 @@ class G1DynamicWalkingEnv(gym.Env):
 
         if up_z < 0.45:
             return True
+
+        if self.episode_step > self.initial_stand_steps + 80:
+            if abs(base_y) > 0.70:
+                return True
+
+            speed_limit = max(0.65, 4.0 * abs(self.target_forward_velocity))
+
+            if abs(forward_velocity) > speed_limit:
+                return True
+
+            if abs(lateral_velocity) > 0.80:
+                return True
+
+            if base_height < 0.50:
+                return True
+
+            if up_z < 0.60:
+                return True
 
         return False
 
@@ -560,6 +816,22 @@ class G1DynamicWalkingEnv(gym.Env):
 
         mujoco.mj_forward(self.model, self.data)
 
+        self._update_previous_foot_positions()
+
+        left_pos = self._get_site_position(self.left_foot_site_id)
+        right_pos = self._get_site_position(self.right_foot_site_id)
+
+        self.ground_foot_height = float(min(left_pos[2], right_pos[2]))
+
+        self.last_foot_info = {
+            "left_contact": False,
+            "right_contact": False,
+            "left_foot_slip": 0.0,
+            "right_foot_slip": 0.0,
+            "left_foot_clearance": 0.0,
+            "right_foot_clearance": 0.0,
+        }
+
         observation = self._build_observation()
 
         info = {
@@ -572,6 +844,12 @@ class G1DynamicWalkingEnv(gym.Env):
             "push_active": False,
             "push_force_magnitude": 0.0,
             "has_reference_root_positions": self.has_reference_root_positions,
+            "left_contact": False,
+            "right_contact": False,
+            "left_foot_slip": 0.0,
+            "right_foot_slip": 0.0,
+            "left_foot_clearance": 0.0,
+            "right_foot_clearance": 0.0,
         }
 
         return observation, info
@@ -610,6 +888,7 @@ class G1DynamicWalkingEnv(gym.Env):
             "y_position": float(self.data.qpos[1]),
             "base_height": float(self.data.qpos[2]),
             "x_velocity": float(self.data.qvel[0]),
+            "y_velocity": float(self.data.qvel[1]),
             "up_z": self._get_up_z(),
             "motion_frame": self.motion_frame,
             "reward": reward,
@@ -617,9 +896,16 @@ class G1DynamicWalkingEnv(gym.Env):
             "push_active": bool(self.last_push_info["push_active"]),
             "push_force_magnitude": float(self.last_push_info["push_force_magnitude"]),
             "has_reference_root_positions": self.has_reference_root_positions,
+            "left_contact": bool(self.last_foot_info["left_contact"]),
+            "right_contact": bool(self.last_foot_info["right_contact"]),
+            "left_foot_slip": float(self.last_foot_info["left_foot_slip"]),
+            "right_foot_slip": float(self.last_foot_info["right_foot_slip"]),
+            "left_foot_clearance": float(self.last_foot_info["left_foot_clearance"]),
+            "right_foot_clearance": float(self.last_foot_info["right_foot_clearance"]),
         }
 
         self.previous_action = action.copy()
+        self._update_previous_foot_positions()
         self.episode_step += 1
 
         return observation, reward, terminated, truncated, info
