@@ -14,12 +14,13 @@ sys.path.append(str(PROJECT_ROOT))
 from envs.g1_dynamic_walking_env import G1DynamicWalkingEnv
 
 
-def make_env(args, monitor_log):
+def make_env(args, monitor_log, use_rsi=False):
     env = G1DynamicWalkingEnv(
         dataset_path=args.dataset_path,
         reference_mode=args.reference_mode,
         target_forward_velocity=args.target_velocity,
         action_scale=args.action_scale,
+        action_target_smoothing=args.action_target_smoothing,
         frame_skip=args.frame_skip,
         max_episode_steps=args.max_episode_steps,
         height_offset=args.height_offset,
@@ -35,6 +36,10 @@ def make_env(args, monitor_log):
         push_force_min=args.push_force_min,
         push_force_max=args.push_force_max,
         push_duration_steps=args.push_duration_steps,
+        include_contact_phase_observation=args.include_contact_phase_observation,
+        reference_state_initialization=use_rsi,
+        rsi_start_frame=args.rsi_start_frame,
+        rsi_end_frame=args.rsi_end_frame,
     )
 
     env = Monitor(env, filename=monitor_log)
@@ -42,8 +47,11 @@ def make_env(args, monitor_log):
 
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description="Train PPO walking policy for Unitree G1 in MuJoCo."
+    )
 
+    # PPO hyperparameters
     parser.add_argument("--total_timesteps", type=int, default=300_000)
     parser.add_argument("--learning_rate", type=float, default=3e-4)
     parser.add_argument("--n_steps", type=int, default=1024)
@@ -51,26 +59,27 @@ def main():
     parser.add_argument("--n_epochs", type=int, default=10)
 
     parser.add_argument(
-        "--dataset_path",
-        type=str,
-        default=os.path.join(
-            "datasets",
-            "processed",
-            "g1_amass_walking_il_15dof.npz",
+        "--ent_coef",
+        type=float,
+        default=0.001,
+        help=(
+            "PPO entropy coefficient. Higher values increase exploration. "
+            "This value is also explicitly overridden when resuming from a checkpoint."
         ),
-        help="Processed AMASS IL dataset path.",
     )
 
-    parser.add_argument(
-        "--reference_mode",
-        type=str,
-        default="transition",
-        choices=["transition", "cyclic"],
-        help="Reference motion mode: transition for stand-to-walk, cyclic for looping walking reference.",
-    )
-
+    # Environment parameters
     parser.add_argument("--target_velocity", type=float, default=0.10)
     parser.add_argument("--action_scale", type=float, default=0.05)
+    parser.add_argument(
+        "--action_target_smoothing",
+        type=float,
+        default=0.55,
+        help=(
+            "v42 low-pass filter for residual joint targets. "
+            "0.0 disables smoothing; 0.55 means 55% previous target and 45% requested target."
+        ),
+    )
     parser.add_argument("--frame_skip", type=int, default=5)
     parser.add_argument("--max_episode_steps", type=int, default=1000)
     parser.add_argument("--height_offset", type=float, default=0.02)
@@ -79,57 +88,127 @@ def main():
     parser.add_argument("--transition_steps", type=int, default=250)
 
     parser.add_argument(
-        "--random_start",
-        action="store_true",
-        help="Start each episode at a random reference frame.",
+        "--dataset_path",
+        type=str,
+        default=None,
+        help=(
+            "Path to the IL/reference dataset .npz file. "
+            "If not provided, the environment default dataset is used."
+        ),
     )
 
+    parser.add_argument(
+        "--reference_mode",
+        type=str,
+        default="transition",
+        choices=["transition", "cyclic"],
+        help="Reference playback mode.",
+    )
+
+    parser.add_argument(
+        "--random_start",
+        action="store_true",
+        help="Start the reference motion at a random frame instead of frame 0.",
+    )
+
+    parser.add_argument(
+        "--include_contact_phase_observation",
+        action="store_true",
+        help=(
+            "Add expected/actual foot contact phase features to the observation. "
+            "This changes observation shape from 59 to 65 and requires training "
+            "a new model from scratch. Do not use this with old 59-observation checkpoints."
+        ),
+    )
+
+    parser.add_argument(
+        "--reference_state_initialization",
+        action="store_true",
+        help=(
+            "Enable v39 Reference State Initialization for the training environment. "
+            "Training episodes start from random walking-reference frames. "
+            "Evaluation still starts from normal standing pose."
+        ),
+    )
+
+    parser.add_argument(
+        "--rsi_start_frame",
+        type=int,
+        default=5,
+        help="First reference frame allowed for RSI reset sampling.",
+    )
+
+    parser.add_argument(
+        "--rsi_end_frame",
+        type=int,
+        default=None,
+        help=(
+            "Last reference frame allowed for RSI reset sampling. "
+            "If omitted, the final dataset frame is used."
+        ),
+    )
+
+    # Output paths
     parser.add_argument(
         "--output",
         type=str,
         default=os.path.join("models", "g1_ppo_walking_policy.zip"),
+        help="Output path for the final PPO model.",
     )
 
     parser.add_argument(
         "--checkpoint_dir",
         type=str,
         default=os.path.join("models", "ppo_walking_checkpoints"),
+        help="Directory for periodic checkpoints and best model.",
     )
 
     parser.add_argument(
         "--log_dir",
         type=str,
         default=os.path.join("logs", "ppo_walking"),
+        help="Directory for Monitor logs and TensorBoard logs.",
     )
 
-    parser.add_argument("--resume", type=str, default=None)
-    parser.add_argument("--check_env", action="store_true")
+    parser.add_argument(
+        "--resume",
+        type=str,
+        default=None,
+        help="Optional path to existing PPO .zip checkpoint to resume from.",
+    )
+
+    parser.add_argument(
+        "--check_env",
+        action="store_true",
+        help="Run Stable-Baselines3 environment checker before training.",
+    )
 
     parser.add_argument(
         "--eval_freq",
         type=int,
         default=25_000,
-        help="Timesteps between evaluations of the current policy.",
+        help="Timesteps between evaluations for best-model tracking.",
     )
 
     parser.add_argument(
         "--n_eval_episodes",
         type=int,
         default=5,
-        help="Number of episodes averaged per evaluation.",
+        help="Number of evaluation episodes used by EvalCallback.",
     )
 
+    # Push-disturbance options
     parser.add_argument(
         "--enable_push",
         action="store_true",
-        help="Enable randomized external pushes at the pelvis.",
+        help="Enable randomized external pushes at the pelvis during training.",
     )
 
     parser.add_argument(
         "--push_window_start",
         type=int,
         default=None,
-        help="Episode step after which pushes may begin. Defaults to initial_stand_steps inside the env.",
+        help="Episode step after which pushes may begin. Defaults to initial_stand_steps.",
     )
 
     parser.add_argument("--push_window_end", type=int, default=600)
@@ -140,9 +219,6 @@ def main():
     parser.add_argument("--push_duration_steps", type=int, default=5)
 
     args = parser.parse_args()
-
-    if not os.path.exists(args.dataset_path):
-        raise FileNotFoundError(f"Dataset not found: {args.dataset_path}")
 
     os.makedirs(os.path.dirname(args.output), exist_ok=True)
     os.makedirs(args.checkpoint_dir, exist_ok=True)
@@ -156,8 +232,19 @@ def main():
     os.makedirs(best_model_dir, exist_ok=True)
     os.makedirs(eval_log_dir, exist_ok=True)
 
-    env = make_env(args, monitor_log)
-    eval_env = make_env(args, eval_monitor_log)
+    # RSI is training-only. EvalCallback must evaluate the normal standing-start task,
+    # otherwise best_model would be selected for random mid-gait resets instead of
+    # the actual showcase start condition.
+    env = make_env(
+        args,
+        monitor_log,
+        use_rsi=args.reference_state_initialization,
+    )
+    eval_env = make_env(
+        args,
+        eval_monitor_log,
+        use_rsi=False,
+    )
 
     if args.check_env:
         print("Checking Gymnasium environment...")
@@ -188,6 +275,20 @@ def main():
         if not os.path.exists(args.resume):
             raise FileNotFoundError(f"Resume model not found: {args.resume}")
 
+        if args.include_contact_phase_observation:
+            print()
+            print("WARNING:")
+            print(
+                "You enabled --include_contact_phase_observation while also using --resume."
+            )
+            print(
+                "This is only valid if the resumed model was originally trained with the same 65-dimensional observation."
+            )
+            print(
+                "Old v10/v16/v20 models used 59-dimensional observations and should NOT be resumed with this flag."
+            )
+            print()
+
         print("Loading existing PPO model:")
         print(args.resume)
 
@@ -196,6 +297,10 @@ def main():
             env=env,
             device="auto",
         )
+
+        previous_ent_coef = model.ent_coef
+        model.ent_coef = args.ent_coef
+        print(f"Overriding ent_coef: {previous_ent_coef} -> {args.ent_coef}")
 
     else:
         model = PPO(
@@ -208,7 +313,7 @@ def main():
             gamma=0.99,
             gae_lambda=0.95,
             clip_range=0.2,
-            ent_coef=0.001,
+            ent_coef=args.ent_coef,
             vf_coef=0.5,
             max_grad_norm=0.5,
             verbose=1,
@@ -217,17 +322,28 @@ def main():
         )
 
     print()
+    print("=" * 80)
     print("Starting PPO walking training")
+    print("=" * 80)
+    print("Total timesteps:", args.total_timesteps)
     print("Dataset path:", args.dataset_path)
     print("Reference mode:", args.reference_mode)
-    print("Total timesteps:", args.total_timesteps)
     print("Target velocity:", args.target_velocity)
     print("Action scale:", args.action_scale)
+    print("Action target smoothing:", args.action_target_smoothing)
     print("Reference speed:", args.reference_speed)
     print("Initial stand steps:", args.initial_stand_steps)
     print("Transition steps:", args.transition_steps)
-    print("Random start:", args.random_start)
+    print("Include contact phase observation:", args.include_contact_phase_observation)
+    print("Reference State Initialization:", args.reference_state_initialization)
+    print("RSI frame range:", args.rsi_start_frame, "to", args.rsi_end_frame)
+    print("Ent coef:", args.ent_coef)
+    print("Learning rate:", args.learning_rate)
+    print("n_steps:", args.n_steps)
+    print("Batch size:", args.batch_size)
+    print("n_epochs:", args.n_epochs)
     print("Eval freq:", args.eval_freq)
+    print("n_eval_episodes:", args.n_eval_episodes)
     print("Best model save path:", best_model_dir)
     print("Push enabled:", args.enable_push)
 
@@ -238,6 +354,7 @@ def main():
         print("Push duration steps:", args.push_duration_steps)
 
     print("Output:", args.output)
+    print("=" * 80)
     print()
 
     model.learn(
@@ -253,12 +370,11 @@ def main():
     eval_env.close()
 
     print()
+    print("=" * 80)
     print("PPO walking training complete.")
     print("Saved final model:", args.output)
-    print(
-        "Best model saved at:",
-        os.path.join(best_model_dir, "best_model.zip"),
-    )
+    print("Best model saved at:", os.path.join(best_model_dir, "best_model.zip"))
+    print("=" * 80)
 
 
 if __name__ == "__main__":
