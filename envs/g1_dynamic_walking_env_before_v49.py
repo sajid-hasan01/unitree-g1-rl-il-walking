@@ -34,12 +34,6 @@ class G1DynamicWalkingEnv(gym.Env):
         push_force_max=60.0,
         push_duration_steps=5,
         include_contact_phase_observation=False,
-        use_reference_contact_mask=False,
-        reference_start_frame=0,
-        use_functional_foot_contact=True,
-        functional_contact_threshold=0.025,
-        use_gait_lift_prior=False,
-        gait_lift_prior_scale=0.45,
         initial_yaw_degrees=None,
         reference_state_initialization=False,
         rsi_start_frame=0,
@@ -129,14 +123,6 @@ class G1DynamicWalkingEnv(gym.Env):
         self.target_forward_velocity = float(target_forward_velocity)
         self.action_scale = float(action_scale)
 
-        # v55:
-        # Previous runs used a scalar residual action_scale around 0.06 rad.
-        # Manual authority tests showed real foot lifting needs much larger joint
-        # offsets: roughly hip_pitch +0.55 rad and knee +0.8 rad. This vector keeps
-        # high authority only on joints needed for foot lift, while keeping waist
-        # and yaw/roll residuals smaller.
-        self.per_joint_residual_scale = self._build_per_joint_residual_scale()
-
         # v42 target smoothing:
         # The PPO action is a residual added to the reference joint pose. Without
         # filtering, the residual target can change abruptly during contact switches.
@@ -157,11 +143,10 @@ class G1DynamicWalkingEnv(gym.Env):
         # if initial_yaw_degrees is None, it is selected automatically from the
         # target direction. For positive-X tasks, yaw remains 0 degrees.
         if initial_yaw_degrees is None:
-            # v51:
-            # Zero-residual tests showed the OpenHE/G1 reference naturally drives
-            # the robot along negative X with yaw=0. The old yaw=180 auto-rotation
-            # made the visual direction look nicer but conflicted with the dynamics.
-            initial_yaw_degrees = 0.0
+            if self.target_forward_velocity < 0.0:
+                initial_yaw_degrees = 180.0
+            else:
+                initial_yaw_degrees = 0.0
 
         self.initial_yaw_degrees = float(initial_yaw_degrees)
         self.initial_base_quat = self._yaw_to_quat_wxyz(
@@ -179,37 +164,6 @@ class G1DynamicWalkingEnv(gym.Env):
         self.transition_steps = int(transition_steps)
         self.random_start = bool(random_start)
         self.include_contact_phase_observation = bool(include_contact_phase_observation)
-
-        # v51:
-        # The original OpenHE contact labels did not match the actual MuJoCo
-        # collision contacts for this G1 XML. By default, v51 does NOT use
-        # reference contact masks for observation/reward targets. It keeps actual
-        # contact/slip/clearance terms and reference joint tracking.
-        self.use_reference_contact_mask = bool(use_reference_contact_mask)
-
-        # v53:
-        # The first frames of this OpenHE segment produced sticky double-support
-        # and backward/falling motion. A root-height sweep showed that starting
-        # near local frame 25 with higher root height is much more dynamically
-        # usable. reference_start_frame shifts the local phase used by normal
-        # standing-start rollouts without changing observation/action shape.
-        self.reference_start_frame = int(reference_start_frame) % self.num_frames
-
-        # v54:
-        # MuJoCo collision contacts stayed true for the swing foot even when the
-        # visual foot site was higher. For gait learning, use functional foot
-        # contact based on relative foot-site clearance: the lower foot is stance,
-        # the higher foot is swing, and both are stance only when heights are close.
-        self.use_functional_foot_contact = bool(use_functional_foot_contact)
-        self.functional_contact_threshold = float(functional_contact_threshold)
-
-        # v57:
-        # PPO was not discovering the manual foot-lift pattern from scratch.
-        # This optional teacher prior injects a small open-loop swing-leg lift
-        # when the phase label says one foot should be swing. PPO still controls
-        # residual corrections on top of this prior.
-        self.use_gait_lift_prior = bool(use_gait_lift_prior)
-        self.gait_lift_prior_scale = float(gait_lift_prior_scale)
 
         # v39 Reference State Initialization (RSI)
         # Training-only locomotion trick inspired by DeepMimic-style imitation RL.
@@ -388,13 +342,48 @@ class G1DynamicWalkingEnv(gym.Env):
         self.previous_action = np.zeros(self.num_actions, dtype=np.float32)
         self.last_targets = np.zeros(self.num_actions, dtype=np.float32)
 
-        # v50: residual action ramp.
-        # The old environment zeroed PPO residual actions during initial standing,
-        # then allowed the full residual immediately at the walk transition. With a
-        # saturated policy this creates a sudden right/left leg jerk. v50 gradually
-        # enables residual actions using the same smooth transition alpha that blends
-        # the reference pose.
-        self.last_residual_alpha = 0.0
+        # v48 diagnostic/control indices:
+        # These are used only for reward shaping and info logging. Observation and
+        # action shapes remain unchanged, so old 65-dimensional PPO checkpoints can
+        # still be resumed.
+        self.action_index_by_joint = {
+            joint_name: index
+            for index, joint_name in enumerate(self.controlled_joint_names)
+        }
+
+        self.left_leg_action_indices = [
+            self.action_index_by_joint[name]
+            for name in [
+                "left_hip_pitch_joint",
+                "left_hip_roll_joint",
+                "left_knee_joint",
+                "left_ankle_pitch_joint",
+                "left_ankle_roll_joint",
+            ]
+            if name in self.action_index_by_joint
+        ]
+
+        self.right_leg_action_indices = [
+            self.action_index_by_joint[name]
+            for name in [
+                "right_hip_pitch_joint",
+                "right_hip_roll_joint",
+                "right_knee_joint",
+                "right_ankle_pitch_joint",
+                "right_ankle_roll_joint",
+            ]
+            if name in self.action_index_by_joint
+        ]
+
+        self.ankle_pitch_action_indices = [
+            self.action_index_by_joint[name]
+            for name in [
+                "left_ankle_pitch_joint",
+                "right_ankle_pitch_joint",
+            ]
+            if name in self.action_index_by_joint
+        ]
+
         self.last_reward_terms = {}
 
         self.next_push_step = None
@@ -450,95 +439,8 @@ class G1DynamicWalkingEnv(gym.Env):
         x = np.clip(x, 0.0, 1.0)
         return x * x * (3.0 - 2.0 * x)
 
-    def _build_per_joint_residual_scale(self):
-        scales = np.zeros(self.num_actions, dtype=np.float64)
-
-        for i, joint_name in enumerate(self.controlled_joint_names):
-            name = str(joint_name)
-
-            if "hip_pitch" in name:
-                scales[i] = 0.55
-            elif "knee" in name:
-                scales[i] = 0.80
-            elif "ankle_pitch" in name:
-                scales[i] = 0.45
-            elif "hip_roll" in name:
-                scales[i] = 0.25
-            elif "ankle_roll" in name:
-                scales[i] = 0.20
-            elif "hip_yaw" in name:
-                scales[i] = 0.12
-            elif "waist" in name:
-                scales[i] = 0.08
-            else:
-                scales[i] = 0.12
-
-        return scales
-
-    def _get_gait_lift_prior(self):
-        prior = np.zeros(self.num_actions, dtype=np.float64)
-
-        if not self.use_gait_lift_prior:
-            return prior
-
-        if self.episode_step < self.initial_stand_steps:
-            return prior
-
-        left_expected, right_expected = self._get_reference_contact_for_step()
-
-        if left_expected is None or right_expected is None:
-            return prior
-
-        # Do not inject a lift during explicit double-support.
-        if left_expected == right_expected:
-            return prior
-
-        # Smoothly introduce the prior after the standing phase.
-        step_after_stand = max(self.episode_step - self.initial_stand_steps, 0)
-        ramp_steps = max(int(0.12 * self.transition_steps), 1)
-        ramp = min(step_after_stand / float(ramp_steps), 1.0)
-        ramp = ramp * ramp * (3.0 - 2.0 * ramp)
-
-        scale = float(self.gait_lift_prior_scale) * float(ramp)
-
-        def add(joint_name, value):
-            if joint_name in self.controlled_joint_names:
-                idx = self.controlled_joint_names.index(joint_name)
-                prior[idx] += float(value)
-
-        # Manual authority test found these offset signs produce collision-free
-        # foot lift:
-        # left  swing: hip_pitch +, hip_roll -, knee +, ankle_pitch +
-        # right swing: hip_pitch +, hip_roll +, knee +, ankle_pitch +
-        if (not left_expected) and right_expected:
-            add("left_hip_pitch_joint", 0.55 * scale)
-            add("left_hip_roll_joint", -0.25 * scale)
-            add("left_knee_joint", 0.80 * scale)
-            add("left_ankle_pitch_joint", 0.45 * scale)
-            add("left_ankle_roll_joint", -0.10 * scale)
-
-            # Slight support-leg knee/ankle compliance.
-            add("right_knee_joint", 0.10 * scale)
-            add("right_ankle_pitch_joint", -0.08 * scale)
-
-        elif (not right_expected) and left_expected:
-            add("right_hip_pitch_joint", 0.55 * scale)
-            add("right_hip_roll_joint", 0.25 * scale)
-            add("right_knee_joint", 0.80 * scale)
-            add("right_ankle_pitch_joint", 0.45 * scale)
-            add("right_ankle_roll_joint", 0.10 * scale)
-
-            # Slight support-leg knee/ankle compliance.
-            add("left_knee_joint", 0.10 * scale)
-            add("left_ankle_pitch_joint", -0.08 * scale)
-
-        return prior
-
-    def _map_reference_frame(self, frame_float):
-        return (float(frame_float) + float(self.reference_start_frame)) % self.num_frames
-
     def _interpolate_reference(self, frame_float):
-        frame_float = self._map_reference_frame(frame_float)
+        frame_float = frame_float % self.num_frames
 
         frame_0 = int(np.floor(frame_float))
         frame_1 = (frame_0 + 1) % self.num_frames
@@ -569,23 +471,7 @@ class G1DynamicWalkingEnv(gym.Env):
         if not self.has_reference_contact_mask:
             return None, None
 
-        if not self.use_reference_contact_mask:
-            return None, None
-
-        # v56:
-        # During the initial standing phase and very early transition, the
-        # physical robot is deliberately initialized with both feet on the floor.
-        # Earlier versions exposed swing-foot labels immediately, creating an
-        # impossible condition: expected swing contact while residual_alpha was
-        # still zero or too small. Hold both expected contacts until the robot has
-        # enough residual authority to begin a real step.
-        early_contact_hold_steps = (
-            self.initial_stand_steps + int(0.25 * self.transition_steps)
-        )
-        if self.episode_step < early_contact_hold_steps:
-            return True, True
-
-        frame_idx = int(round(self._map_reference_frame(self.motion_frame))) % self.num_frames
+        frame_idx = int(round(self.motion_frame)) % self.num_frames
 
         left_expected = bool(self.reference_contact_mask[frame_idx, 0] > 0.5)
         right_expected = bool(self.reference_contact_mask[frame_idx, 1] > 0.5)
@@ -649,35 +535,7 @@ class G1DynamicWalkingEnv(gym.Env):
             right_pos - self.previous_right_foot_pos
         ) / max(self.control_dt, 1e-6)
 
-        collision_left_contact, collision_right_contact = self._get_foot_contacts()
-
-        # Functional clearance: relative to the lower of the two foot sites.
-        # This is more useful for learning visual swing/stance than raw collision
-        # contact because the Unitree G1 ankle collision capsules can touch the
-        # floor while the foot site is visibly lifted.
-        pair_ground_height = float(min(left_pos[2], right_pos[2]))
-        left_foot_clearance = float(max(left_pos[2] - pair_ground_height, 0.0))
-        right_foot_clearance = float(max(right_pos[2] - pair_ground_height, 0.0))
-
-        if self.use_functional_foot_contact:
-            close_left = left_foot_clearance <= self.functional_contact_threshold
-            close_right = right_foot_clearance <= self.functional_contact_threshold
-
-            if close_left and close_right:
-                left_contact = True
-                right_contact = True
-            elif left_foot_clearance < right_foot_clearance:
-                left_contact = True
-                right_contact = False
-            else:
-                left_contact = False
-                right_contact = True
-        else:
-            left_contact = collision_left_contact
-            right_contact = collision_right_contact
-
-            left_foot_clearance = float(max(left_pos[2] - self.ground_foot_height, 0.0))
-            right_foot_clearance = float(max(right_pos[2] - self.ground_foot_height, 0.0))
+        left_contact, right_contact = self._get_foot_contacts()
 
         left_foot_slip = 0.0
         right_foot_slip = 0.0
@@ -688,11 +546,12 @@ class G1DynamicWalkingEnv(gym.Env):
         if right_contact:
             right_foot_slip = float(np.linalg.norm(right_vel[:2]))
 
+        left_foot_clearance = float(max(left_pos[2] - self.ground_foot_height, 0.0))
+        right_foot_clearance = float(max(right_pos[2] - self.ground_foot_height, 0.0))
+
         foot_info = {
             "left_contact": bool(left_contact),
             "right_contact": bool(right_contact),
-            "collision_left_contact": bool(collision_left_contact),
-            "collision_right_contact": bool(collision_right_contact),
             "left_foot_slip": left_foot_slip,
             "right_foot_slip": right_foot_slip,
             "left_foot_clearance": left_foot_clearance,
@@ -757,8 +616,7 @@ class G1DynamicWalkingEnv(gym.Env):
         joint_pos = self._get_joint_positions()
         joint_vel = self._get_joint_velocities()
 
-        phase_frame = self._map_reference_frame(self.motion_frame)
-        phase = 2.0 * np.pi * (phase_frame / max(self.num_frames - 1, 1))
+        phase = 2.0 * np.pi * (self.motion_frame / max(self.num_frames - 1, 1))
 
         phase_features = np.array(
             [
@@ -825,38 +683,10 @@ class G1DynamicWalkingEnv(gym.Env):
     def _apply_position_control(self, action):
         ref_joint_pos = self._get_reference_joint_positions_for_step()
 
-        transition_alpha, _, _ = self._get_transition_alpha_and_desired_velocity()
-
         if self.episode_step < self.initial_stand_steps:
-            residual_alpha = 0.0
-        else:
-            # v58:
-            # v57 over-trained into a wrong-direction double-support lean before
-            # the first real swing phase. Keep PPO residual authority small while
-            # the contact curriculum still forces double support, then allow full
-            # authority once a true swing/stance label appears.
-            left_expected, right_expected = self._get_reference_contact_for_step()
+            action = np.zeros_like(action, dtype=np.float32)
 
-            if left_expected is True and right_expected is True:
-                residual_alpha = 0.20
-            else:
-                residual_alpha = 1.0
-
-        self.last_residual_alpha = float(residual_alpha)
-
-        # v55:
-        # Per-joint residual authority. With --action_scale 1.0, hip/knee/ankle
-        # residuals are large enough to reproduce the manual foot-lift test.
-        residual = (
-            self.action_scale
-            * residual_alpha
-            * self.per_joint_residual_scale
-            * action
-        )
-
-        gait_lift_prior = self._get_gait_lift_prior()
-
-        target_joint_pos = ref_joint_pos + gait_lift_prior + residual
+        target_joint_pos = ref_joint_pos + self.action_scale * action
         applied_targets = np.zeros(self.num_actions, dtype=np.float32)
 
         for i, actuator_id in enumerate(self.actuator_ids):
@@ -947,12 +777,12 @@ class G1DynamicWalkingEnv(gym.Env):
         base_height = float(self.data.qpos[2])
         base_y = float(self.data.qpos[1])
 
-        # v34: use MuJoCo subtree COM instead of only pelvis/root qpos.
-        # The pelvis subtree contains the robot body under the pelvis.
+        # MuJoCo subtree COM for the robot under the pelvis body.
         robot_com = self.data.subtree_com[self.pelvis_body_id].copy()
 
         forward_velocity = float(self.data.qvel[0])
         lateral_velocity = float(self.data.qvel[1])
+        root_angular_velocity = self.data.qvel[3:6].copy()
 
         up_z = self._get_up_z()
         reference_height = self._get_reference_height_for_step()
@@ -975,9 +805,7 @@ class G1DynamicWalkingEnv(gym.Env):
         )
 
         target_speed = abs(desired_velocity)
-
         allowed_speed = max(target_speed + 0.03, 0.07)
-
         directional_velocity = direction_sign * forward_velocity
 
         tracking_error = np.mean((joint_pos - ref_joint_pos) ** 2)
@@ -991,8 +819,17 @@ class G1DynamicWalkingEnv(gym.Env):
         height_error = base_height - reference_height
         height_reward = np.exp(-(height_error ** 2) / 0.018)
 
+        # v48 stability-gated forward progress:
+        # Forward motion receives extra reward only while the body is still
+        # dynamically usable. This prevents PPO from earning forward reward by
+        # pitching/rocking itself into a fall.
+        stable_body_gate = 1.0
+        stable_body_gate *= float(np.clip((up_z - 0.94) / 0.05, 0.0, 1.0))
+        stable_body_gate *= float(np.clip((base_height - 0.72) / 0.07, 0.0, 1.0))
+        stable_body_gate *= float(np.clip((0.45 - abs(lateral_velocity)) / 0.25, 0.0, 1.0))
+
         if transition_alpha > 0.25:
-            progress_reward = float(
+            progress_reward = stable_body_gate * float(
                 np.clip(directional_velocity, 0.0, target_speed)
             )
         else:
@@ -1000,22 +837,12 @@ class G1DynamicWalkingEnv(gym.Env):
 
         wrong_direction_amount = max(-directional_velocity, 0.0)
 
-        # v58:
-        # Penalize wrong-direction velocity immediately after the stand phase.
-        # v57 at 50k/75k learned to move +X, then terminated before swing.
         wrong_direction_penalty = 0.0
-        if self.episode_step >= self.initial_stand_steps:
+        if transition_alpha > 0.25:
             wrong_direction_penalty = (
-                28.0 * wrong_direction_amount
-                + 36.0 * (wrong_direction_amount ** 2)
+                12.0 * wrong_direction_amount
+                + 8.0 * (wrong_direction_amount ** 2)
             )
-
-        directional_position = direction_sign * float(self.data.qpos[0])
-        wrong_position_amount = max(-directional_position, 0.0)
-
-        wrong_position_penalty = 0.0
-        if self.episode_step >= self.initial_stand_steps:
-            wrong_position_penalty = 10.0 * wrong_position_amount
 
         overspeed = max(directional_velocity - allowed_speed, 0.0)
         hard_overspeed = max(
@@ -1024,27 +851,17 @@ class G1DynamicWalkingEnv(gym.Env):
         )
 
         overspeed_penalty = 0.0
-        if self.episode_step >= self.initial_stand_steps:
+        if transition_alpha > 0.20:
             overspeed_penalty = (
-                22.0 * overspeed
-                + 28.0 * (overspeed ** 2)
-                + 38.0 * hard_overspeed
-                + 42.0 * (hard_overspeed ** 2)
+                16.0 * overspeed
+                + 18.0 * (overspeed ** 2)
+                + 30.0 * hard_overspeed
+                + 30.0 * (hard_overspeed ** 2)
             )
 
         absolute_forward_speed = abs(forward_velocity)
         high_speed_penalty = 5.0 * max(absolute_forward_speed - 0.35, 0.0)
 
-        # v56: discourage the characteristic fall-before-step mode.
-        torso_collapse_penalty = 0.0
-        if self.episode_step >= self.initial_stand_steps:
-            torso_collapse_penalty = 18.0 * max(0.985 - up_z, 0.0) ** 2
-
-        # v42 lateral stability:
-        # v40/v41 improved survival/contact exposure but several checkpoints failed
-        # by sliding sideways with |y_velocity| near 0.8 m/s. Increase lateral
-        # position and velocity penalties, and add an extra penalty once lateral
-        # speed exceeds a safe walking band.
         lateral_position_penalty = 5.0 * (base_y ** 2) + 1.25 * abs(base_y)
 
         lateral_velocity_penalty = (
@@ -1060,32 +877,51 @@ class G1DynamicWalkingEnv(gym.Env):
                 + 8.0 * (lateral_speed_excess ** 2)
             )
 
-        action_penalty = 0.015 * np.mean(action ** 2)
-        smoothness_penalty = 0.035 * np.mean((action - self.previous_action) ** 2)
-        joint_velocity_penalty = 0.002 * np.mean(joint_vel ** 2)
-
-        # v50: discourage saturated raw actions, especially before and during the
-        # stand-to-walk transition. In earlier runs, the residual was not applied
-        # during standing, so the policy could output saturated actions that later
-        # caused a sudden leg jerk.
+        # v48 anti-saturation terms:
+        # Your diagnostic CSV showed the v43 policy often drives many residual
+        # actions to nearly +/-1. That creates bang-bang control, foot slip, and
+        # one-leg-dominant stepping. Penalize only the extreme tail so useful
+        # moderate actions are still allowed.
         abs_action = np.abs(action)
         saturation_fraction = float(np.mean(abs_action > 0.92))
-        saturation_excess = np.maximum(abs_action - 0.86, 0.0)
+        hard_saturation_fraction = float(np.mean(abs_action > 0.98))
+        saturation_excess = np.maximum(abs_action - 0.82, 0.0)
+
+        action_penalty = 0.10 * np.mean(action ** 2)
+        smoothness_penalty = 0.18 * np.mean((action - self.previous_action) ** 2)
+        joint_velocity_penalty = 0.0025 * np.mean(joint_vel ** 2)
 
         action_saturation_penalty = 0.0
-        early_action_readiness_penalty = 0.0
-
-        if transition_alpha > 0.10:
+        if transition_alpha > 0.15:
             action_saturation_penalty = (
-                0.08 * float(np.mean(saturation_excess ** 2))
-                + 0.04 * saturation_fraction
+                0.85 * float(np.mean(saturation_excess ** 2))
+                + 0.40 * saturation_fraction
+                + 0.60 * hard_saturation_fraction
             )
 
-        if transition_alpha < 0.65:
-            early_action_readiness_penalty = (
-                0.035 * float(np.mean(action ** 2))
-                + 0.05 * saturation_fraction
-            )
+        ankle_saturation_penalty = 0.0
+        if transition_alpha > 0.15 and len(self.ankle_pitch_action_indices) > 0:
+            ankle_abs = abs_action[self.ankle_pitch_action_indices]
+            ankle_saturation_penalty = 0.30 * float(np.mean(np.maximum(ankle_abs - 0.80, 0.0) ** 2))
+
+        left_leg_action_energy = 0.0
+        right_leg_action_energy = 0.0
+
+        if len(self.left_leg_action_indices) > 0:
+            left_leg_action_energy = float(np.sum(abs_action[self.left_leg_action_indices]))
+        if len(self.right_leg_action_indices) > 0:
+            right_leg_action_energy = float(np.sum(abs_action[self.right_leg_action_indices]))
+
+        leg_action_imbalance = abs(right_leg_action_energy - left_leg_action_energy)
+        leg_action_imbalance_penalty = 0.0
+        if transition_alpha > 0.20:
+            # Mild: natural gait phases are asymmetric, but huge persistent
+            # imbalance is a symptom of single-leg-dominant stepping.
+            leg_action_imbalance_penalty = 0.08 * max(leg_action_imbalance - 1.40, 0.0)
+
+        root_angular_velocity_penalty = 0.0
+        if transition_alpha > 0.20:
+            root_angular_velocity_penalty = 0.018 * float(np.sum(root_angular_velocity ** 2))
 
         low_height_penalty = 0.0
         if base_height < 0.72:
@@ -1094,6 +930,10 @@ class G1DynamicWalkingEnv(gym.Env):
         tilt_penalty = 0.0
         if up_z < 0.92:
             tilt_penalty = 5.0 * (0.92 - up_z)
+
+        v48_soft_tilt_penalty = 0.0
+        if transition_alpha > 0.35 and up_z < 0.975:
+            v48_soft_tilt_penalty = 1.75 * (0.975 - up_z)
 
         collapse_penalty = 0.0
         if self.episode_step >= self.initial_stand_steps and base_height < 0.70:
@@ -1134,64 +974,40 @@ class G1DynamicWalkingEnv(gym.Env):
 
         use_generic_foot_terms = True
 
-        early_contact_hold_steps = (
-            self.initial_stand_steps + int(0.25 * self.transition_steps)
-        )
-
-        if (
-            self.has_reference_contact_mask
-            and self.use_reference_contact_mask
-            and self.episode_step >= early_contact_hold_steps
-        ):
+        if self.has_reference_contact_mask and transition_alpha > 0.15:
             use_generic_foot_terms = False
 
             if left_contact == left_expected:
-                contact_phase_reward += 1.00
+                contact_phase_reward += 1.50
             else:
-                contact_mismatch_penalty += 1.25
+                contact_mismatch_penalty += 1.50
 
             if right_contact == right_expected:
-                contact_phase_reward += 1.00
+                contact_phase_reward += 1.50
             else:
-                contact_mismatch_penalty += 1.25
+                contact_mismatch_penalty += 1.50
 
             if left_expected:
-                phase_slip_penalty += 1.8 * left_foot_slip
+                phase_slip_penalty += 3.2 * left_foot_slip
             if right_expected:
-                phase_slip_penalty += 1.8 * right_foot_slip
+                phase_slip_penalty += 3.2 * right_foot_slip
 
-            # v55:
-            # Make swing-foot clearance a primary curriculum objective. Previous
-            # policies received only ~0.15 reward for lift, so they preferred
-            # low-action sliding. Manual tests show 5-8 cm clearance is feasible.
-            clearance_target = 0.065
-            stance_clearance_limit = 0.030
+            clearance_target = 0.035
 
             if not left_expected:
-                phase_clearance_reward += 3.00 * min(
+                phase_clearance_reward += 0.15 * min(
                     left_foot_clearance / clearance_target,
                     1.0,
                 )
-            else:
-                phase_clearance_excess_penalty += 1.00 * max(
-                    left_foot_clearance - stance_clearance_limit,
-                    0.0,
-                )
-
             if not right_expected:
-                phase_clearance_reward += 3.00 * min(
+                phase_clearance_reward += 0.15 * min(
                     right_foot_clearance / clearance_target,
                     1.0,
                 )
-            else:
-                phase_clearance_excess_penalty += 1.00 * max(
-                    right_foot_clearance - stance_clearance_limit,
-                    0.0,
-                )
 
-            phase_clearance_excess_penalty += 0.6 * (
-                max(left_foot_clearance - 0.20, 0.0)
-                + max(right_foot_clearance - 0.20, 0.0)
+            phase_clearance_excess_penalty = 1.1 * (
+                max(left_foot_clearance - 0.16, 0.0)
+                + max(right_foot_clearance - 0.16, 0.0)
             )
 
         foot_slip_penalty = 0.0
@@ -1200,7 +1016,7 @@ class G1DynamicWalkingEnv(gym.Env):
 
         if use_generic_foot_terms:
             if transition_alpha > 0.15:
-                foot_slip_penalty = 2.5 * (left_foot_slip + right_foot_slip)
+                foot_slip_penalty = 3.2 * (left_foot_slip + right_foot_slip)
 
             if transition_alpha > 0.35:
                 clearance_target = 0.035
@@ -1218,7 +1034,7 @@ class G1DynamicWalkingEnv(gym.Env):
 
                 foot_clearance_reward *= 0.15
 
-                excessive_clearance_penalty = 1.0 * (
+                excessive_clearance_penalty = 1.1 * (
                     max(left_foot_clearance - 0.16, 0.0)
                     + max(right_foot_clearance - 0.16, 0.0)
                 )
@@ -1227,20 +1043,21 @@ class G1DynamicWalkingEnv(gym.Env):
             foot_clearance_reward = phase_clearance_reward
             excessive_clearance_penalty = phase_clearance_excess_penalty
 
-        # v34: weaker COM-over-support-foot balance term.
-        # This is active only during true single support.
-        # v33 improved survival but hurt contact timing, so v34 reduces its influence.
-        # It still targets the observed v29/v31 failure mode:
-        # the swing foot stays lifted while the body COM drifts forward/laterally,
-        # causing speed-cap termination instead of stable one-leg balance.
+        # v48 stance-foot COM and lateral stabilization.
+        # This targets your visual failure: one foot enters support while the
+        # pelvis/COM drifts and the body falls instead of transferring weight.
         single_leg_balance_reward = 0.0
         single_leg_balance_penalty = 0.0
+        stance_lateral_velocity_penalty = 0.0
+        stance_slip_extra_penalty = 0.0
 
         if transition_alpha > 0.35 and contact_count == 1:
             if left_contact and not right_contact:
                 support_pos = self._get_site_position(self.left_foot_site_id)
+                stance_slip_extra_penalty = 1.6 * left_foot_slip
             elif right_contact and not left_contact:
                 support_pos = self._get_site_position(self.right_foot_site_id)
+                stance_slip_extra_penalty = 1.6 * right_foot_slip
             else:
                 support_pos = None
 
@@ -1249,28 +1066,52 @@ class G1DynamicWalkingEnv(gym.Env):
                 com_dy = float(robot_com[1] - support_pos[1])
                 com_offset = float(np.hypot(com_dx, com_dy))
 
-                single_leg_balance_reward = 0.60 * np.exp(
-                    -(com_offset ** 2) / 0.02
+                single_leg_balance_reward = 0.80 * np.exp(
+                    -(com_offset ** 2) / 0.018
                 )
-                single_leg_balance_penalty = 1.00 * max(com_offset - 0.18, 0.0)
+
+                single_leg_balance_penalty = (
+                    1.80 * max(com_offset - 0.16, 0.0)
+                    + 3.00 * max(abs(com_dy) - 0.10, 0.0)
+                )
+
+                stance_lateral_velocity_penalty = (
+                    1.60 * max(abs(lateral_velocity) - 0.18, 0.0)
+                    + 2.00 * max(abs(lateral_velocity) - 0.32, 0.0) ** 2
+                )
+
+        # v48 expected single-support bonus:
+        # Reward only when expected and actual contact agree AND lateral velocity
+        # is controlled. This pushes the policy toward real alternating support
+        # instead of just matching contact while falling sideways.
+        stable_contact_phase_reward = 0.0
+
+        if self.has_reference_contact_mask and transition_alpha > 0.35:
+            expected_single_support = bool(left_expected) ^ bool(right_expected)
+            actual_single_support = bool(left_contact) ^ bool(right_contact)
+
+            if expected_single_support and actual_single_support:
+                if left_contact == left_expected and right_contact == right_expected:
+                    lateral_gate = float(np.clip((0.32 - abs(lateral_velocity)) / 0.32, 0.0, 1.0))
+                    tilt_gate = float(np.clip((up_z - 0.96) / 0.04, 0.0, 1.0))
+                    stable_contact_phase_reward = 0.45 * lateral_gate * tilt_gate
 
         reward = (
             1.30 * tracking_reward
-            + 1.80 * velocity_reward
+            + 1.55 * velocity_reward
             + 2.20 * upright_reward
             + 1.50 * height_reward
-            + 0.20 * progress_reward
+            + 0.45 * progress_reward
             + single_support_reward
             + double_support_reward
-            + 1.00 * foot_clearance_reward
+            + foot_clearance_reward
             + contact_phase_reward
             + single_leg_balance_reward
+            + stable_contact_phase_reward
             + 0.15
             - wrong_direction_penalty
-            - wrong_position_penalty
             - overspeed_penalty
             - high_speed_penalty
-            - torso_collapse_penalty
             - lateral_position_penalty
             - lateral_velocity_penalty
             - lateral_drift_penalty
@@ -1278,9 +1119,12 @@ class G1DynamicWalkingEnv(gym.Env):
             - smoothness_penalty
             - joint_velocity_penalty
             - action_saturation_penalty
-            - early_action_readiness_penalty
+            - ankle_saturation_penalty
+            - leg_action_imbalance_penalty
+            - root_angular_velocity_penalty
             - low_height_penalty
             - tilt_penalty
+            - v48_soft_tilt_penalty
             - collapse_penalty
             - no_contact_penalty
             - double_flight_penalty
@@ -1289,30 +1133,37 @@ class G1DynamicWalkingEnv(gym.Env):
             - contact_mismatch_penalty
             - double_support_sliding_penalty
             - single_leg_balance_penalty
+            - stance_lateral_velocity_penalty
+            - stance_slip_extra_penalty
         )
 
         self.last_reward_terms = {
-            "reward_version": "v58_direction_guarded_prior",
-            "residual_alpha": float(self.last_residual_alpha),
-            "action_saturation_fraction": float(saturation_fraction),
-            "action_saturation_penalty": float(action_saturation_penalty),
-            "early_action_readiness_penalty": float(early_action_readiness_penalty),
             "tracking_reward": float(tracking_reward),
             "velocity_reward": float(velocity_reward),
             "upright_reward": float(upright_reward),
             "height_reward": float(height_reward),
             "progress_reward": float(progress_reward),
+            "stable_body_gate": float(stable_body_gate),
             "contact_phase_reward": float(contact_phase_reward),
+            "stable_contact_phase_reward": float(stable_contact_phase_reward),
+            "action_saturation_fraction": float(saturation_fraction),
+            "hard_action_saturation_fraction": float(hard_saturation_fraction),
+            "action_saturation_penalty": float(action_saturation_penalty),
+            "ankle_saturation_penalty": float(ankle_saturation_penalty),
+            "left_leg_action_energy": float(left_leg_action_energy),
+            "right_leg_action_energy": float(right_leg_action_energy),
+            "leg_action_imbalance": float(leg_action_imbalance),
+            "leg_action_imbalance_penalty": float(leg_action_imbalance_penalty),
+            "stance_lateral_velocity_penalty": float(stance_lateral_velocity_penalty),
+            "stance_slip_extra_penalty": float(stance_slip_extra_penalty),
             "single_leg_balance_reward": float(single_leg_balance_reward),
             "single_leg_balance_penalty": float(single_leg_balance_penalty),
-            "lateral_velocity_penalty": float(lateral_velocity_penalty),
+            "root_angular_velocity_penalty": float(root_angular_velocity_penalty),
+            "v48_soft_tilt_penalty": float(v48_soft_tilt_penalty),
+            "foot_slip_penalty": float(foot_slip_penalty),
             "lateral_drift_penalty": float(lateral_drift_penalty),
             "wrong_direction_penalty": float(wrong_direction_penalty),
-            "wrong_position_penalty": float(wrong_position_penalty),
             "overspeed_penalty": float(overspeed_penalty),
-            "torso_collapse_penalty": float(torso_collapse_penalty),
-            "foot_slip_penalty": float(foot_slip_penalty),
-            "contact_mismatch_penalty": float(contact_mismatch_penalty),
         }
 
         return float(reward)
@@ -1349,10 +1200,10 @@ class G1DynamicWalkingEnv(gym.Env):
             if directional_velocity < -0.20:
                 return True
 
-            if self.target_forward_velocity < 0.0 and base_x > 0.10:
+            if self.target_forward_velocity < 0.0 and base_x > 0.18:
                 return True
 
-            if self.target_forward_velocity > 0.0 and base_x < -0.10:
+            if self.target_forward_velocity > 0.0 and base_x < -0.18:
                 return True
 
             if transition_alpha > 0.35 and directional_velocity > 0.45:
@@ -1401,14 +1252,13 @@ class G1DynamicWalkingEnv(gym.Env):
         checkpoints can be resumed.
         """
 
-        local_frame_index = int(frame_index) % self.num_frames
-        actual_frame_index = int(round(self._map_reference_frame(local_frame_index))) % self.num_frames
+        frame_index = int(frame_index) % self.num_frames
 
-        ref_joint_pos = self.reference_joint_positions[actual_frame_index].astype(np.float64)
-        ref_joint_vel = self.reference_joint_velocities[actual_frame_index].astype(np.float64)
-        ref_root_pos = self.reference_root_positions[actual_frame_index].astype(np.float64)
+        ref_joint_pos = self.reference_joint_positions[frame_index].astype(np.float64)
+        ref_joint_vel = self.reference_joint_velocities[frame_index].astype(np.float64)
+        ref_root_pos = self.reference_root_positions[frame_index].astype(np.float64)
 
-        self.motion_frame = float(local_frame_index)
+        self.motion_frame = float(frame_index)
 
         self.data.qpos[:] = self.stand_qpos
         self.data.qvel[:] = 0.0
@@ -1490,8 +1340,6 @@ class G1DynamicWalkingEnv(gym.Env):
         self.episode_step = 0
         self.previous_action = np.zeros(self.num_actions, dtype=np.float32)
         self.last_targets = np.zeros(self.num_actions, dtype=np.float32)
-        self.last_residual_alpha = 0.0
-        self.last_reward_terms = {}
 
         self.push_remaining_steps = 0
         self.current_push_force = np.zeros(3, dtype=np.float64)
@@ -1555,8 +1403,6 @@ class G1DynamicWalkingEnv(gym.Env):
             "reference_mode": self.reference_mode,
             "dataset_path": self.dataset_path,
             "motion_frame": self.motion_frame,
-            "reference_start_frame": self.reference_start_frame,
-            "reference_actual_frame": float(self._map_reference_frame(self.motion_frame)),
             "base_height": float(self.data.qpos[2]),
             "up_z": self._get_up_z(),
             "upper_body_joints_held": len(self.upper_body_actuators),
@@ -1564,25 +1410,15 @@ class G1DynamicWalkingEnv(gym.Env):
             "push_force_magnitude": 0.0,
             "has_reference_root_positions": self.has_reference_root_positions,
             "has_reference_contact_mask": self.has_reference_contact_mask,
-            "use_reference_contact_mask": self.use_reference_contact_mask,
-            "use_functional_foot_contact": self.use_functional_foot_contact,
-            "functional_contact_threshold": self.functional_contact_threshold,
-            "use_gait_lift_prior": self.use_gait_lift_prior,
-            "gait_lift_prior_scale": self.gait_lift_prior_scale,
-            "residual_scale_max": float(np.max(self.per_joint_residual_scale)),
-            "residual_scale_mean": float(np.mean(self.per_joint_residual_scale)),
             "include_contact_phase_observation": self.include_contact_phase_observation,
             "initial_yaw_degrees": self.initial_yaw_degrees,
             "action_target_smoothing": self.action_target_smoothing,
-            "reward_version": "v58_direction_guarded_prior",
-            "residual_alpha": float(self.last_residual_alpha),
+            "reward_version": "v48_physics_stable_anti_saturation",
             "reference_state_initialization": self.reference_state_initialization,
             "rsi_active_this_episode": self.rsi_active_this_episode,
             "rsi_frame_this_episode": self.rsi_frame_this_episode,
             "left_contact": bool(self.last_foot_info["left_contact"]),
             "right_contact": bool(self.last_foot_info["right_contact"]),
-            "collision_left_contact": bool(self.last_foot_info.get("collision_left_contact", False)),
-            "collision_right_contact": bool(self.last_foot_info.get("collision_right_contact", False)),
             "left_foot_slip": float(self.last_foot_info["left_foot_slip"]),
             "right_foot_slip": float(self.last_foot_info["right_foot_slip"]),
             "left_foot_clearance": float(self.last_foot_info["left_foot_clearance"]),
@@ -1638,25 +1474,15 @@ class G1DynamicWalkingEnv(gym.Env):
             "push_force_magnitude": float(self.last_push_info["push_force_magnitude"]),
             "has_reference_root_positions": self.has_reference_root_positions,
             "has_reference_contact_mask": self.has_reference_contact_mask,
-            "use_reference_contact_mask": self.use_reference_contact_mask,
-            "use_functional_foot_contact": self.use_functional_foot_contact,
-            "functional_contact_threshold": self.functional_contact_threshold,
-            "use_gait_lift_prior": self.use_gait_lift_prior,
-            "gait_lift_prior_scale": self.gait_lift_prior_scale,
-            "residual_scale_max": float(np.max(self.per_joint_residual_scale)),
-            "residual_scale_mean": float(np.mean(self.per_joint_residual_scale)),
             "include_contact_phase_observation": self.include_contact_phase_observation,
             "initial_yaw_degrees": self.initial_yaw_degrees,
             "action_target_smoothing": self.action_target_smoothing,
-            "reward_version": "v58_direction_guarded_prior",
-            "residual_alpha": float(self.last_residual_alpha),
+            "reward_version": "v48_physics_stable_anti_saturation",
             "reference_state_initialization": self.reference_state_initialization,
             "rsi_active_this_episode": self.rsi_active_this_episode,
             "rsi_frame_this_episode": self.rsi_frame_this_episode,
             "left_contact": bool(self.last_foot_info["left_contact"]),
             "right_contact": bool(self.last_foot_info["right_contact"]),
-            "collision_left_contact": bool(self.last_foot_info.get("collision_left_contact", False)),
-            "collision_right_contact": bool(self.last_foot_info.get("collision_right_contact", False)),
             "left_foot_slip": float(self.last_foot_info["left_foot_slip"]),
             "right_foot_slip": float(self.last_foot_info["right_foot_slip"]),
             "left_foot_clearance": float(self.last_foot_info["left_foot_clearance"]),

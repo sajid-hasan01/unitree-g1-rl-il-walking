@@ -40,8 +40,6 @@ def make_env(args, monitor_log, use_rsi=False):
         include_contact_phase_observation=args.include_contact_phase_observation,
         use_reference_contact_mask=args.use_reference_contact_mask,
         reference_start_frame=args.reference_start_frame,
-        use_gait_lift_prior=args.use_gait_lift_prior,
-        gait_lift_prior_scale=args.gait_lift_prior_scale,
         initial_yaw_degrees=args.initial_yaw_degrees,
         reference_state_initialization=use_rsi,
         rsi_start_frame=args.rsi_start_frame,
@@ -146,26 +144,9 @@ def main():
         type=int,
         default=0,
         help=(
-            "Local reference phase offset. v58 uses 25 to skip the unstable sticky "
+            "Local reference phase offset. v53 uses 25 to skip the unstable sticky "
             "beginning of the selected OpenHE segment."
         ),
-    )
-
-    parser.add_argument(
-        "--use_gait_lift_prior",
-        action="store_true",
-        help=(
-            "Enable v58 teacher gait-lift prior. This injects a small manual "
-            "swing-leg lift based on expected contact phase, while PPO controls "
-            "residual corrections."
-        ),
-    )
-
-    parser.add_argument(
-        "--gait_lift_prior_scale",
-        type=float,
-        default=0.45,
-        help="Scale for the v58 teacher gait-lift prior.",
     )
 
     parser.add_argument(
@@ -419,8 +400,6 @@ def main():
     print("Include contact phase observation:", args.include_contact_phase_observation)
     print("Use reference contact mask:", args.use_reference_contact_mask)
     print("Reference start frame:", args.reference_start_frame)
-    print("Use gait lift prior:", args.use_gait_lift_prior)
-    print("Gait lift prior scale:", args.gait_lift_prior_scale)
     print("Initial yaw degrees:", args.initial_yaw_degrees)
     print("Reference State Initialization:", args.reference_state_initialization)
     print("RSI frame range:", args.rsi_start_frame, "to", args.rsi_end_frame)

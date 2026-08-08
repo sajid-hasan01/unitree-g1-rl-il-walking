@@ -7,7 +7,6 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CallbackList, CheckpointCallback, EvalCallback
 from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.utils import get_schedule_fn
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(PROJECT_ROOT))
@@ -21,7 +20,6 @@ def make_env(args, monitor_log, use_rsi=False):
         reference_mode=args.reference_mode,
         target_forward_velocity=args.target_velocity,
         action_scale=args.action_scale,
-        action_target_smoothing=args.action_target_smoothing,
         frame_skip=args.frame_skip,
         max_episode_steps=args.max_episode_steps,
         height_offset=args.height_offset,
@@ -38,11 +36,6 @@ def make_env(args, monitor_log, use_rsi=False):
         push_force_max=args.push_force_max,
         push_duration_steps=args.push_duration_steps,
         include_contact_phase_observation=args.include_contact_phase_observation,
-        use_reference_contact_mask=args.use_reference_contact_mask,
-        reference_start_frame=args.reference_start_frame,
-        use_gait_lift_prior=args.use_gait_lift_prior,
-        gait_lift_prior_scale=args.gait_lift_prior_scale,
-        initial_yaw_degrees=args.initial_yaw_degrees,
         reference_state_initialization=use_rsi,
         rsi_start_frame=args.rsi_start_frame,
         rsi_end_frame=args.rsi_end_frame,
@@ -63,10 +56,6 @@ def main():
     parser.add_argument("--n_steps", type=int, default=1024)
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--n_epochs", type=int, default=10)
-    parser.add_argument("--clip_range", type=float, default=0.2)
-    parser.add_argument("--vf_coef", type=float, default=0.5)
-    parser.add_argument("--max_grad_norm", type=float, default=0.5)
-    parser.add_argument("--target_kl", type=float, default=None)
 
     parser.add_argument(
         "--ent_coef",
@@ -81,15 +70,6 @@ def main():
     # Environment parameters
     parser.add_argument("--target_velocity", type=float, default=0.10)
     parser.add_argument("--action_scale", type=float, default=0.05)
-    parser.add_argument(
-        "--action_target_smoothing",
-        type=float,
-        default=0.55,
-        help=(
-            "v42 low-pass filter for residual joint targets. "
-            "0.0 disables smoothing; 0.55 means 55% previous target and 45% requested target."
-        ),
-    )
     parser.add_argument("--frame_skip", type=int, default=5)
     parser.add_argument("--max_episode_steps", type=int, default=1000)
     parser.add_argument("--height_offset", type=float, default=0.02)
@@ -128,54 +108,6 @@ def main():
             "Add expected/actual foot contact phase features to the observation. "
             "This changes observation shape from 59 to 65 and requires training "
             "a new model from scratch. Do not use this with old 59-observation checkpoints."
-        ),
-    )
-
-    parser.add_argument(
-        "--use_reference_contact_mask",
-        action="store_true",
-        help=(
-            "Use dataset contact_mask as expected contact labels in reward/observation. "
-            "For v51 this is disabled by default because original OpenHE contact labels "
-            "did not match the actual MuJoCo G1 collision contacts."
-        ),
-    )
-
-    parser.add_argument(
-        "--reference_start_frame",
-        type=int,
-        default=0,
-        help=(
-            "Local reference phase offset. v58 uses 25 to skip the unstable sticky "
-            "beginning of the selected OpenHE segment."
-        ),
-    )
-
-    parser.add_argument(
-        "--use_gait_lift_prior",
-        action="store_true",
-        help=(
-            "Enable v58 teacher gait-lift prior. This injects a small manual "
-            "swing-leg lift based on expected contact phase, while PPO controls "
-            "residual corrections."
-        ),
-    )
-
-    parser.add_argument(
-        "--gait_lift_prior_scale",
-        type=float,
-        default=0.45,
-        help="Scale for the v58 teacher gait-lift prior.",
-    )
-
-    parser.add_argument(
-        "--initial_yaw_degrees",
-        type=float,
-        default=0.0,
-        help=(
-            "Initial root yaw in degrees. v51 default is 0.0 because zero-residual "
-            "tests showed the selected OpenHE reference naturally drives negative-X "
-            "motion with yaw 0."
         ),
     )
 
@@ -249,13 +181,6 @@ def main():
     )
 
     parser.add_argument(
-        "--checkpoint_freq",
-        type=int,
-        default=25_000,
-        help="Timesteps between periodic checkpoint saves.",
-    )
-
-    parser.add_argument(
         "--n_eval_episodes",
         type=int,
         default=5,
@@ -317,7 +242,7 @@ def main():
         print("Environment check complete.")
 
     checkpoint_callback = CheckpointCallback(
-        save_freq=args.checkpoint_freq,
+        save_freq=50_000,
         save_path=args.checkpoint_dir,
         name_prefix="g1_ppo_walking",
         save_replay_buffer=False,
@@ -367,22 +292,6 @@ def main():
         model.ent_coef = args.ent_coef
         print(f"Overriding ent_coef: {previous_ent_coef} -> {args.ent_coef}")
 
-        model.learning_rate = args.learning_rate
-        model.lr_schedule = get_schedule_fn(args.learning_rate)
-        for param_group in model.policy.optimizer.param_groups:
-            param_group["lr"] = args.learning_rate
-
-        model.clip_range = get_schedule_fn(args.clip_range)
-        model.vf_coef = args.vf_coef
-        model.max_grad_norm = args.max_grad_norm
-        model.target_kl = args.target_kl
-
-        print("Overriding learning_rate:", args.learning_rate)
-        print("Overriding clip_range:", args.clip_range)
-        print("Overriding vf_coef:", args.vf_coef)
-        print("Overriding max_grad_norm:", args.max_grad_norm)
-        print("Overriding target_kl:", args.target_kl)
-
     else:
         model = PPO(
             policy="MlpPolicy",
@@ -393,11 +302,10 @@ def main():
             n_epochs=args.n_epochs,
             gamma=0.99,
             gae_lambda=0.95,
-            clip_range=args.clip_range,
+            clip_range=0.2,
             ent_coef=args.ent_coef,
-            vf_coef=args.vf_coef,
-            max_grad_norm=args.max_grad_norm,
-            target_kl=args.target_kl,
+            vf_coef=0.5,
+            max_grad_norm=0.5,
             verbose=1,
             tensorboard_log=args.log_dir,
             device="auto",
@@ -412,29 +320,18 @@ def main():
     print("Reference mode:", args.reference_mode)
     print("Target velocity:", args.target_velocity)
     print("Action scale:", args.action_scale)
-    print("Action target smoothing:", args.action_target_smoothing)
     print("Reference speed:", args.reference_speed)
     print("Initial stand steps:", args.initial_stand_steps)
     print("Transition steps:", args.transition_steps)
     print("Include contact phase observation:", args.include_contact_phase_observation)
-    print("Use reference contact mask:", args.use_reference_contact_mask)
-    print("Reference start frame:", args.reference_start_frame)
-    print("Use gait lift prior:", args.use_gait_lift_prior)
-    print("Gait lift prior scale:", args.gait_lift_prior_scale)
-    print("Initial yaw degrees:", args.initial_yaw_degrees)
     print("Reference State Initialization:", args.reference_state_initialization)
     print("RSI frame range:", args.rsi_start_frame, "to", args.rsi_end_frame)
     print("Ent coef:", args.ent_coef)
     print("Learning rate:", args.learning_rate)
-    print("Clip range:", args.clip_range)
-    print("VF coef:", args.vf_coef)
-    print("Max grad norm:", args.max_grad_norm)
-    print("Target KL:", args.target_kl)
     print("n_steps:", args.n_steps)
     print("Batch size:", args.batch_size)
     print("n_epochs:", args.n_epochs)
     print("Eval freq:", args.eval_freq)
-    print("Checkpoint freq:", args.checkpoint_freq)
     print("n_eval_episodes:", args.n_eval_episodes)
     print("Best model save path:", best_model_dir)
     print("Push enabled:", args.enable_push)

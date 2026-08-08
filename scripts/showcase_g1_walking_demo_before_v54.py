@@ -214,8 +214,6 @@ def build_env(args, enable_push=False):
         include_contact_phase_observation=True,
         use_reference_contact_mask=args.use_reference_contact_mask,
         reference_start_frame=args.reference_start_frame,
-        use_gait_lift_prior=args.use_gait_lift_prior,
-        gait_lift_prior_scale=args.gait_lift_prior_scale,
         initial_yaw_degrees=args.initial_yaw_degrees,
     )
     return env
@@ -453,8 +451,6 @@ def run_rl_policy(args, mode):
     print("Action target smoothing:", args.action_target_smoothing)
     print("Reference speed:", args.reference_speed)
     print("Reference start frame:", args.reference_start_frame)
-    print("Use gait lift prior:", args.use_gait_lift_prior)
-    print("Gait lift prior scale:", args.gait_lift_prior_scale)
     print("Initial stand steps:", args.initial_stand_steps)
     print("Transition steps:", args.transition_steps)
     print("Push enabled:", enable_push)
@@ -641,20 +637,9 @@ def main():
         type=int,
         default=0,
         help=(
-            "Local reference phase offset. Use 25 for v58 models trained with "
+            "Local reference phase offset. Use 25 for v53 models trained with "
             "--reference_start_frame 25."
         ),
-    )
-    parser.add_argument(
-        "--use_gait_lift_prior",
-        action="store_true",
-        help="Enable v58 teacher gait-lift prior.",
-    )
-    parser.add_argument(
-        "--gait_lift_prior_scale",
-        type=float,
-        default=0.45,
-        help="Scale for the v58 teacher gait-lift prior.",
     )
     parser.add_argument(
         "--initial_yaw_degrees",

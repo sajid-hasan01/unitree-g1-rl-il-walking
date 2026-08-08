@@ -641,20 +641,20 @@ def main():
         type=int,
         default=0,
         help=(
-            "Local reference phase offset. Use 25 for v58 models trained with "
+            "Local reference phase offset. Use 25 for v57 models trained with "
             "--reference_start_frame 25."
         ),
     )
     parser.add_argument(
         "--use_gait_lift_prior",
         action="store_true",
-        help="Enable v58 teacher gait-lift prior.",
+        help="Enable v57 teacher gait-lift prior.",
     )
     parser.add_argument(
         "--gait_lift_prior_scale",
         type=float,
         default=0.45,
-        help="Scale for the v58 teacher gait-lift prior.",
+        help="Scale for the v57 teacher gait-lift prior.",
     )
     parser.add_argument(
         "--initial_yaw_degrees",

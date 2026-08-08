@@ -1,5 +1,4 @@
 import argparse
-import csv
 import os
 import sys
 import time
@@ -17,7 +16,7 @@ from envs.g1_dynamic_walking_env import G1DynamicWalkingEnv
 
 
 DEFAULT_DATASET = (
-    "datasets\\processed\\g1_openhe_walk3_subject4_1320_1620_legs_only_smooth_15dof_mjcontact.npz"
+    "datasets\\processed\\g1_openhe_walk3_subject4_1320_1620_legs_only_smooth_15dof.npz"
 )
 
 DEFAULT_CLEAN_MODEL = "models\\g1_ppo_walking_policy_final_clean_v29_best.zip"
@@ -30,172 +29,12 @@ def format_contact(value):
     return str(bool(value))
 
 
-DIAGNOSTIC_JOINTS = [
-    ("left_hip_pitch_joint", "Lhip"),
-    ("right_hip_pitch_joint", "Rhip"),
-    ("left_knee_joint", "Lknee"),
-    ("right_knee_joint", "Rknee"),
-    ("left_ankle_pitch_joint", "Lank"),
-    ("right_ankle_pitch_joint", "Rank"),
-    ("left_hip_roll_joint", "Lroll"),
-    ("right_hip_roll_joint", "Rroll"),
-    ("left_ankle_roll_joint", "LankR"),
-    ("right_ankle_roll_joint", "RankR"),
-]
-
-
-def quat_wxyz_to_pitch_degrees(quat):
-    """Return approximate root pitch angle in degrees from a MuJoCo [w, x, y, z] quaternion."""
-    w, x, y, z = [float(v) for v in quat]
-    sin_pitch = 2.0 * (w * y - z * x)
-    sin_pitch = float(np.clip(sin_pitch, -1.0, 1.0))
-    return float(np.rad2deg(np.arcsin(sin_pitch)))
-
-
-def build_action_index_map(env):
-    return {name: i for i, name in enumerate(env.controlled_joint_names)}
-
-
-def get_action_by_joint(action, action_index_map, joint_name):
-    index = action_index_map.get(joint_name, None)
-    if index is None:
-        return 0.0
-    return float(action[index])
-
-
-def bool_to_int(value):
-    if value is None:
-        return -1
-    return int(bool(value))
-
-
-def collect_action_diagnostics(env, action, info, reward, step, action_index_map):
-    values = {
-        short_name: get_action_by_joint(action, action_index_map, joint_name)
-        for joint_name, short_name in DIAGNOSTIC_JOINTS
-    }
-
-    left_energy = (
-        abs(values["Lhip"])
-        + abs(values["Lknee"])
-        + abs(values["Lank"])
-        + abs(values["Lroll"])
-        + abs(values["LankR"])
-    )
-    right_energy = (
-        abs(values["Rhip"])
-        + abs(values["Rknee"])
-        + abs(values["Rank"])
-        + abs(values["Rroll"])
-        + abs(values["RankR"])
-    )
-
-    pitch_deg = quat_wxyz_to_pitch_degrees(env.data.qpos[3:7])
-
-    row = {
-        "step": int(step),
-        "motion_frame": float(info.get("motion_frame", 0.0)),
-        "x_position": float(info.get("x_position", 0.0)),
-        "y_position": float(info.get("y_position", 0.0)),
-        "x_velocity": float(info.get("x_velocity", 0.0)),
-        "y_velocity": float(info.get("y_velocity", 0.0)),
-        "base_height": float(info.get("base_height", 0.0)),
-        "up_z": float(info.get("up_z", 0.0)),
-        "root_pitch_deg": float(pitch_deg),
-        "reward": float(reward),
-        "left_contact": bool_to_int(info.get("left_contact", None)),
-        "right_contact": bool_to_int(info.get("right_contact", None)),
-        "left_expected_contact": bool_to_int(info.get("left_expected_contact", None)),
-        "right_expected_contact": bool_to_int(info.get("right_expected_contact", None)),
-        "left_foot_clearance": float(info.get("left_foot_clearance", 0.0)),
-        "right_foot_clearance": float(info.get("right_foot_clearance", 0.0)),
-        "left_foot_slip": float(info.get("left_foot_slip", 0.0)),
-        "right_foot_slip": float(info.get("right_foot_slip", 0.0)),
-        "left_leg_action_energy": float(left_energy),
-        "right_leg_action_energy": float(right_energy),
-        "right_minus_left_action_energy": float(right_energy - left_energy),
-    }
-
-    for key, value in values.items():
-        row[f"action_{key}"] = float(value)
-
-    return row
-
-
-def print_action_diagnostic(row):
-    print(
-        "DIAG "
-        f"step={row['step']:04d} "
-        f"mf={row['motion_frame']:.2f} "
-        f"x={row['x_position']:.3f} "
-        f"y={row['y_position']:.3f} "
-        f"xv={row['x_velocity']:.3f} "
-        f"yv={row['y_velocity']:.3f} "
-        f"h={row['base_height']:.3f} "
-        f"upz={row['up_z']:.3f} "
-        f"pitch={row['root_pitch_deg']:.2f} "
-        f"Lc={row['left_contact']}/Le={row['left_expected_contact']} "
-        f"Rc={row['right_contact']}/Re={row['right_expected_contact']} "
-        f"Lclr={row['left_foot_clearance']:.3f} "
-        f"Rclr={row['right_foot_clearance']:.3f} "
-        f"Lslip={row['left_foot_slip']:.3f} "
-        f"Rslip={row['right_foot_slip']:.3f} "
-        f"Lhip={row['action_Lhip']:+.3f} "
-        f"Rhip={row['action_Rhip']:+.3f} "
-        f"Lkne={row['action_Lknee']:+.3f} "
-        f"Rkne={row['action_Rknee']:+.3f} "
-        f"Lank={row['action_Lank']:+.3f} "
-        f"Rank={row['action_Rank']:+.3f} "
-        f"L_E={row['left_leg_action_energy']:.3f} "
-        f"R_E={row['right_leg_action_energy']:.3f} "
-        f"R-L={row['right_minus_left_action_energy']:+.3f}"
-    )
-
-
-def write_diagnostic_csv(rows, csv_path):
-    if not rows:
-        print("Diagnostic CSV not written: no diagnostic rows were collected.")
-        return
-
-    output_path = Path(csv_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    fieldnames = list(rows[0].keys())
-
-    with output_path.open("w", newline="", encoding="utf-8") as csv_file:
-        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
-
-    print("Diagnostic CSV saved:", output_path)
-
-
-def yaw_to_quat_wxyz(yaw_radians):
-    """
-    MuJoCo free-joint quaternion order is [w, x, y, z].
-    A 180 degree yaw makes the G1 body face the -X direction.
-    This fixes the showcase issue where the reference root moves in -X
-    while the visual body still faces +X, making the walk look backward.
-    """
-    half_yaw = 0.5 * float(yaw_radians)
-    return np.array(
-        [
-            np.cos(half_yaw),
-            0.0,
-            0.0,
-            np.sin(half_yaw),
-        ],
-        dtype=np.float64,
-    )
-
-
 def build_env(args, enable_push=False):
     env = G1DynamicWalkingEnv(
         dataset_path=args.dataset_path,
         reference_mode="cyclic",
         target_forward_velocity=args.target_velocity,
         action_scale=args.action_scale,
-        action_target_smoothing=args.action_target_smoothing,
         frame_skip=args.frame_skip,
         max_episode_steps=args.max_episode_steps,
         height_offset=args.height_offset,
@@ -212,11 +51,6 @@ def build_env(args, enable_push=False):
         push_force_max=args.push_force_max,
         push_duration_steps=args.push_duration_steps,
         include_contact_phase_observation=True,
-        use_reference_contact_mask=args.use_reference_contact_mask,
-        reference_start_frame=args.reference_start_frame,
-        use_gait_lift_prior=args.use_gait_lift_prior,
-        gait_lift_prior_scale=args.gait_lift_prior_scale,
-        initial_yaw_degrees=args.initial_yaw_degrees,
     )
     return env
 
@@ -255,12 +89,6 @@ def apply_reference_pose(env, motion_frame, demo_step, args):
     This mode is NOT the trained RL policy.
     It visualizes the OpenHE retargeted walking reference in MuJoCo.
     It is useful for showing the imitation target used by the project.
-
-    v2 change:
-    The OpenHE segment moves mostly in the -X direction. If the root orientation
-    is kept as identity, the robot can visually look like it is walking backward.
-    For showcase, we yaw-rotate the base by 180 degrees by default so the robot
-    visually faces the -X motion direction.
     """
 
     joint_pos = get_reference_joint_positions(env, motion_frame, demo_step, args)
@@ -290,15 +118,11 @@ def apply_reference_pose(env, motion_frame, demo_step, args):
         env.data.qpos[1] = 0.0
         env.data.qpos[2] = float(env.stand_qpos[2])
 
-    # v2: rotate visual facing direction for reference replay.
-    # Default yaw is 180 degrees, so negative-X motion looks like forward walking.
-    yaw_radians = np.deg2rad(args.reference_yaw_degrees)
-    quat = yaw_to_quat_wxyz(yaw_radians)
-
-    env.data.qpos[3] = float(quat[0])
-    env.data.qpos[4] = float(quat[1])
-    env.data.qpos[5] = float(quat[2])
-    env.data.qpos[6] = float(quat[3])
+    # Keep torso orientation upright for clean visual replay.
+    env.data.qpos[3] = 1.0
+    env.data.qpos[4] = 0.0
+    env.data.qpos[5] = 0.0
+    env.data.qpos[6] = 0.0
 
     env.data.qvel[:] = 0.0
 
@@ -335,8 +159,6 @@ def run_reference_replay(args):
     print("Reference FPS:", env.fps)
     print("Root motion scale:", args.root_motion_scale)
     print("Reference replay speed:", args.reference_replay_speed)
-    print("Reference yaw degrees:", args.reference_yaw_degrees)
-    print("Note: 180 degrees makes -X dataset motion look visually forward.")
 
     viewer = None
     motion_frame = 0.0
@@ -374,10 +196,8 @@ def run_reference_replay(args):
                 print(
                     f"step={step:04d}, "
                     f"x={float(env.data.qpos[0]):.3f}, "
-                    f"y={float(env.data.qpos[1]):.3f}, "
                     f"height={float(env.data.qpos[2]):.3f}, "
                     f"up_z={env._get_up_z():.3f}, "
-                    f"yaw_deg={args.reference_yaw_degrees:.1f}, "
                     f"motion_frame={motion_frame:.2f}, "
                     f"L=({left_contact}/exp={format_contact(left_expected)}) "
                     f"R=({right_contact}/exp={format_contact(right_expected)}) "
@@ -416,10 +236,6 @@ def run_reference_replay(args):
             f"{contact_match_rate:.3f}",
             f"({contact_match_count}/{contact_check_count} foot-checks)",
         )
-        print(
-            "Note: this contact metric is not the main score for reference replay; "
-            "reference_replay is kinematic visualization, not a trained physics policy."
-        )
 
     print_footer()
 
@@ -450,18 +266,10 @@ def run_rl_policy(args, mode):
     print("Action shape:", env.action_space.shape)
     print("Target velocity:", args.target_velocity)
     print("Action scale:", args.action_scale)
-    print("Action target smoothing:", args.action_target_smoothing)
     print("Reference speed:", args.reference_speed)
-    print("Reference start frame:", args.reference_start_frame)
-    print("Use gait lift prior:", args.use_gait_lift_prior)
-    print("Gait lift prior scale:", args.gait_lift_prior_scale)
     print("Initial stand steps:", args.initial_stand_steps)
     print("Transition steps:", args.transition_steps)
     print("Push enabled:", enable_push)
-    print(
-        "Note: RL modes use the trained policy exactly as trained. "
-        "Do not yaw-rotate RL mode; that would change the policy input distribution."
-    )
 
     model = PPO.load(model_path, device="auto")
 
@@ -474,18 +282,6 @@ def run_rl_policy(args, mode):
 
     contact_match_count = 0
     contact_check_count = 0
-
-    action_index_map = build_action_index_map(env)
-    diagnostic_rows = []
-
-    if args.diagnose_actions:
-        print()
-        print("Action diagnostic mode: ON")
-        print("Diagnostic interval:", args.diagnostic_every)
-        print("Diagnostic CSV:", args.diagnostic_csv if args.diagnostic_csv else "disabled")
-        print("Controlled joints:")
-        for i, joint_name in enumerate(env.controlled_joint_names):
-            print(f"  action[{i:02d}] = {joint_name}")
 
     viewer = None
     final_info = info
@@ -523,19 +319,6 @@ def run_rl_policy(args, mode):
                 contact_check_count += 1
                 if right_contact == bool(right_expected):
                     contact_match_count += 1
-
-            if args.diagnose_actions and args.diagnostic_every > 0:
-                if step % args.diagnostic_every == 0:
-                    diagnostic_row = collect_action_diagnostics(
-                        env=env,
-                        action=action,
-                        info=info,
-                        reward=reward,
-                        step=step,
-                        action_index_map=action_index_map,
-                    )
-                    diagnostic_rows.append(diagnostic_row)
-                    print_action_diagnostic(diagnostic_row)
 
             if args.print_every > 0 and step % args.print_every == 0:
                 print(
@@ -595,9 +378,6 @@ def run_rl_policy(args, mode):
     else:
         print("contact phase match rate: unavailable")
 
-    if args.diagnose_actions and args.diagnostic_csv:
-        write_diagnostic_csv(diagnostic_rows, args.diagnostic_csv)
-
     print_footer()
 
 
@@ -636,53 +416,7 @@ def main():
     )
 
     parser.add_argument("--target_velocity", type=float, default=-0.08)
-    parser.add_argument(
-        "--reference_start_frame",
-        type=int,
-        default=0,
-        help=(
-            "Local reference phase offset. Use 25 for v58 models trained with "
-            "--reference_start_frame 25."
-        ),
-    )
-    parser.add_argument(
-        "--use_gait_lift_prior",
-        action="store_true",
-        help="Enable v58 teacher gait-lift prior.",
-    )
-    parser.add_argument(
-        "--gait_lift_prior_scale",
-        type=float,
-        default=0.45,
-        help="Scale for the v58 teacher gait-lift prior.",
-    )
-    parser.add_argument(
-        "--initial_yaw_degrees",
-        type=float,
-        default=0.0,
-        help=(
-            "Initial root yaw in degrees. Use 0.0 for v51/v52 yaw-zero experiments."
-        ),
-    )
-    parser.add_argument(
-        "--use_reference_contact_mask",
-        action="store_true",
-        help=(
-            "Use the dataset contact_mask as expected contact labels during evaluation. "
-            "Use this only with the corrected mjcontact dataset and policies trained with "
-            "--use_reference_contact_mask."
-        ),
-    )
     parser.add_argument("--action_scale", type=float, default=0.06)
-    parser.add_argument(
-        "--action_target_smoothing",
-        type=float,
-        default=0.55,
-        help=(
-            "Low-pass smoothing for residual joint targets. "
-            "Use the same value used during training, for example 0.35 for v43."
-        ),
-    )
     parser.add_argument("--frame_skip", type=int, default=5)
     parser.add_argument("--max_episode_steps", type=int, default=1000)
     parser.add_argument("--height_offset", type=float, default=0.02)
@@ -712,29 +446,6 @@ def main():
         type=int,
         default=25,
         help="Print status every N demo steps.",
-    )
-
-    parser.add_argument(
-        "--diagnose_actions",
-        action="store_true",
-        help=(
-            "Print compact leg-action diagnostics for RL modes. "
-            "Use this to diagnose left/right action imbalance and contact failure."
-        ),
-    )
-
-    parser.add_argument(
-        "--diagnostic_every",
-        type=int,
-        default=20,
-        help="Print action diagnostics every N policy steps when --diagnose_actions is set.",
-    )
-
-    parser.add_argument(
-        "--diagnostic_csv",
-        type=str,
-        default="",
-        help="Optional CSV path for action diagnostics, for example results\\v43_diag.csv.",
     )
 
     parser.add_argument(
@@ -785,16 +496,6 @@ def main():
         help=(
             "Scale reference root translation for visual replay. "
             "0.0 means walking in place. 0.08 gives visible forward movement."
-        ),
-    )
-
-    parser.add_argument(
-        "--reference_yaw_degrees",
-        type=float,
-        default=180.0,
-        help=(
-            "Yaw rotation for reference replay visual facing direction. "
-            "Default 180 makes -X dataset motion look visually forward."
         ),
     )
 

@@ -146,7 +146,7 @@ def main():
         type=int,
         default=0,
         help=(
-            "Local reference phase offset. v58 uses 25 to skip the unstable sticky "
+            "Local reference phase offset. v57 uses 25 to skip the unstable sticky "
             "beginning of the selected OpenHE segment."
         ),
     )
@@ -155,7 +155,7 @@ def main():
         "--use_gait_lift_prior",
         action="store_true",
         help=(
-            "Enable v58 teacher gait-lift prior. This injects a small manual "
+            "Enable v57 teacher gait-lift prior. This injects a small manual "
             "swing-leg lift based on expected contact phase, while PPO controls "
             "residual corrections."
         ),
@@ -165,7 +165,7 @@ def main():
         "--gait_lift_prior_scale",
         type=float,
         default=0.45,
-        help="Scale for the v58 teacher gait-lift prior.",
+        help="Scale for the v57 teacher gait-lift prior.",
     )
 
     parser.add_argument(

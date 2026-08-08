@@ -38,11 +38,6 @@ def make_env(args, monitor_log, use_rsi=False):
         push_force_max=args.push_force_max,
         push_duration_steps=args.push_duration_steps,
         include_contact_phase_observation=args.include_contact_phase_observation,
-        use_reference_contact_mask=args.use_reference_contact_mask,
-        reference_start_frame=args.reference_start_frame,
-        use_gait_lift_prior=args.use_gait_lift_prior,
-        gait_lift_prior_scale=args.gait_lift_prior_scale,
-        initial_yaw_degrees=args.initial_yaw_degrees,
         reference_state_initialization=use_rsi,
         rsi_start_frame=args.rsi_start_frame,
         rsi_end_frame=args.rsi_end_frame,
@@ -128,54 +123,6 @@ def main():
             "Add expected/actual foot contact phase features to the observation. "
             "This changes observation shape from 59 to 65 and requires training "
             "a new model from scratch. Do not use this with old 59-observation checkpoints."
-        ),
-    )
-
-    parser.add_argument(
-        "--use_reference_contact_mask",
-        action="store_true",
-        help=(
-            "Use dataset contact_mask as expected contact labels in reward/observation. "
-            "For v51 this is disabled by default because original OpenHE contact labels "
-            "did not match the actual MuJoCo G1 collision contacts."
-        ),
-    )
-
-    parser.add_argument(
-        "--reference_start_frame",
-        type=int,
-        default=0,
-        help=(
-            "Local reference phase offset. v58 uses 25 to skip the unstable sticky "
-            "beginning of the selected OpenHE segment."
-        ),
-    )
-
-    parser.add_argument(
-        "--use_gait_lift_prior",
-        action="store_true",
-        help=(
-            "Enable v58 teacher gait-lift prior. This injects a small manual "
-            "swing-leg lift based on expected contact phase, while PPO controls "
-            "residual corrections."
-        ),
-    )
-
-    parser.add_argument(
-        "--gait_lift_prior_scale",
-        type=float,
-        default=0.45,
-        help="Scale for the v58 teacher gait-lift prior.",
-    )
-
-    parser.add_argument(
-        "--initial_yaw_degrees",
-        type=float,
-        default=0.0,
-        help=(
-            "Initial root yaw in degrees. v51 default is 0.0 because zero-residual "
-            "tests showed the selected OpenHE reference naturally drives negative-X "
-            "motion with yaw 0."
         ),
     )
 
@@ -417,11 +364,6 @@ def main():
     print("Initial stand steps:", args.initial_stand_steps)
     print("Transition steps:", args.transition_steps)
     print("Include contact phase observation:", args.include_contact_phase_observation)
-    print("Use reference contact mask:", args.use_reference_contact_mask)
-    print("Reference start frame:", args.reference_start_frame)
-    print("Use gait lift prior:", args.use_gait_lift_prior)
-    print("Gait lift prior scale:", args.gait_lift_prior_scale)
-    print("Initial yaw degrees:", args.initial_yaw_degrees)
     print("Reference State Initialization:", args.reference_state_initialization)
     print("RSI frame range:", args.rsi_start_frame, "to", args.rsi_end_frame)
     print("Ent coef:", args.ent_coef)
