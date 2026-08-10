@@ -40,3 +40,6 @@ models/*
 # OS
 .DS_Store
 Thumbs.db
+# Local environment and backups
+venv311/
+g1_project_large_files_backup/
