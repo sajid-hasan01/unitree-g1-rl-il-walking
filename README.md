@@ -9,7 +9,7 @@ The final goal is to create a single walking system that can:
 - walk forward,
 - maintain balance,
 - recover from external pushes,
-- use imitation learning from AMASS-retargeted G1 walking data,
+- use imitation learning from OpenHE & AMASS-retargeted G1 walking data,
 - use reinforcement learning for dynamic stability and push recovery.
 
 ## Method
