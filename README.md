@@ -1,6 +1,6 @@
 # RL and IL Based Walking, Balance, and Push-Recovery Control of Unitree G1 in MuJoCo
 
-This project develops a Unitree G1 humanoid robot walking controller in MuJoCo using imitation learning and reinforcement learning.
+This project develops a Unitree G1 humanoid robot walking controller in MuJoCo using **Imitation learning** and **Reinforcement learning**.
 
 ## Goal
 
