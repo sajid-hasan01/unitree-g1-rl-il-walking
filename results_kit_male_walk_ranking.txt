@@ -1,0 +1,185 @@
+=============================================================================================================================
+BEST TRUE-MALE KIT SMPL-X WALKING MOTIONS
+=============================================================================================================================
+
+#01 SCORE=109.5 SIMPLE=YES
+ duration=6.43s frames=773 fps=120 speed=0.929m/s
+ displacement=5.979m straightness=0.9901 lateral95=0.055m backtracking=0.00%
+ penalties=NONE
+/mnt/d/KIT (1)/KIT/3/walk_with_right_support_table06_stageii.npz
+
+#02 SCORE=109.4 SIMPLE=YES
+ duration=6.64s frames=798 fps=120 speed=0.878m/s
+ displacement=5.831m straightness=0.9907 lateral95=0.058m backtracking=0.00%
+ penalties=NONE
+/mnt/d/KIT (1)/KIT/3/walk_with_left_support_table08_stageii.npz
+
+#03 SCORE=108.2 SIMPLE=YES
+ duration=6.34s frames=762 fps=120 speed=0.941m/s
+ displacement=5.970m straightness=0.9895 lateral95=0.079m backtracking=0.00%
+ penalties=NONE
+/mnt/d/KIT (1)/KIT/3/walk_with_left_support06_FrqONi5_stageii.npz
+
+#04 SCORE=108.1 SIMPLE=YES
+ duration=6.17s frames=742 fps=120 speed=0.950m/s
+ displacement=5.869m straightness=0.9913 lateral95=0.087m backtracking=0.00%
+ penalties=NONE
+/mnt/d/KIT (1)/KIT/3/walk_6m_straight_line04_stageii.npz
+
+#05 SCORE=107.7 SIMPLE=YES
+ duration=6.34s frames=762 fps=120 speed=0.941m/s
+ displacement=5.970m straightness=0.9895 lateral95=0.080m backtracking=0.26%
+ penalties=NONE
+/mnt/d/KIT (1)/KIT/3/walk_with_left_support06_stageii.npz
+
+#06 SCORE=107.4 SIMPLE=YES
+ duration=5.93s frames=713 fps=120 speed=0.998m/s
+ displacement=5.919m straightness=0.9929 lateral95=0.102m backtracking=0.00%
+ penalties=NONE
+/mnt/d/KIT (1)/KIT/3/walk_with_left_support_table01_stageii.npz
+
+#07 SCORE=106.7 SIMPLE=YES
+ duration=6.17s frames=741 fps=120 speed=0.935m/s
+ displacement=5.767m straightness=0.9881 lateral95=0.103m backtracking=0.00%
+ penalties=NONE
+/mnt/d/KIT (1)/KIT/3/walk_with_right_support_table02_stageii.npz
+
+#08 SCORE=105.2 SIMPLE=YES
+ duration=6.28s frames=754 fps=120 speed=0.947m/s
+ displacement=5.944m straightness=0.9899 lateral95=0.150m backtracking=0.00%
+ penalties=NONE
+/mnt/d/KIT (1)/KIT/3/walk_with_left_support02_stageii.npz
+
+#09 SCORE=105.0 SIMPLE=YES
+ duration=4.13s frames=497 fps=120 speed=0.713m/s
+ displacement=2.947m straightness=0.9929 lateral95=0.041m backtracking=0.00%
+ penalties=NONE
+/mnt/d/KIT (1)/KIT/3/walking_fast07_stageii.npz
+
+#10 SCORE=103.4 SIMPLE=YES
+ duration=4.34s frames=522 fps=120 speed=0.645m/s
+ displacement=2.799m straightness=0.9885 lateral95=0.042m backtracking=0.00%
+ penalties=NONE
+/mnt/d/KIT (1)/KIT/3/walking_fast02_stageii.npz
+
+#11 SCORE=102.8 SIMPLE=YES
+ duration=3.82s frames=459 fps=120 speed=0.777m/s
+ displacement=2.967m straightness=0.9890 lateral95=0.040m backtracking=0.00%
+ penalties=NONE
+/mnt/d/KIT (1)/KIT/359/walking_fast04_stageii.npz
+
+#12 SCORE=101.4 SIMPLE=YES
+ duration=3.67s frames=442 fps=120 speed=0.811m/s
+ displacement=2.981m straightness=0.9874 lateral95=0.040m backtracking=0.00%
+ penalties=NONE
+/mnt/d/KIT (1)/KIT/359/walking_fast07_stageii.npz
+
+#13 SCORE=101.3 SIMPLE=YES
+ duration=3.58s frames=430 fps=120 speed=0.836m/s
+ displacement=2.988m straightness=0.9882 lateral95=0.035m backtracking=0.00%
+ penalties=NONE
+/mnt/d/KIT (1)/KIT/359/walking_fast02_stageii.npz
+
+#14 SCORE=101.1 SIMPLE=YES
+ duration=3.58s frames=431 fps=120 speed=0.768m/s
+ displacement=2.754m straightness=0.9925 lateral95=0.053m backtracking=0.00%
+ penalties=NONE
+/mnt/d/KIT (1)/KIT/3/walking_fast04_stageii.npz
+
+#15 SCORE=100.9 SIMPLE=YES
+ duration=3.56s frames=428 fps=120 speed=0.770m/s
+ displacement=2.738m straightness=0.9896 lateral95=0.040m backtracking=0.23%
+ penalties=NONE
+/mnt/d/KIT (1)/KIT/3/walking_fast08_stageii.npz
+
+#16 SCORE=100.7 SIMPLE=YES
+ duration=3.58s frames=431 fps=120 speed=0.789m/s
+ displacement=2.829m straightness=0.9877 lateral95=0.044m backtracking=0.00%
+ penalties=NONE
+/mnt/d/KIT (1)/KIT/3/walking_fast10_stageii.npz
+
+#17 SCORE=100.7 SIMPLE=YES
+ duration=3.67s frames=442 fps=120 speed=0.830m/s
+ displacement=3.052m straightness=0.9873 lateral95=0.053m backtracking=0.00%
+ penalties=NONE
+/mnt/d/KIT (1)/KIT/359/walking_fast10_stageii.npz
+
+#18 SCORE=100.5 SIMPLE=YES
+ duration=3.83s frames=460 fps=120 speed=0.731m/s
+ displacement=2.795m straightness=0.9840 lateral95=0.051m backtracking=0.00%
+ penalties=NONE
+/mnt/d/KIT (1)/KIT/3/walking_fast09_stageii.npz
+
+#19 SCORE=99.9 SIMPLE=YES
+ duration=4.47s frames=538 fps=120 speed=0.629m/s
+ displacement=2.814m straightness=0.9807 lateral95=0.063m backtracking=0.00%
+ penalties=NONE
+/mnt/d/KIT (1)/KIT/9/WalkingStraightForwards05_stageii.npz
+
+#20 SCORE=99.6 SIMPLE=YES
+ duration=3.42s frames=411 fps=120 speed=0.809m/s
+ displacement=2.762m straightness=0.9886 lateral95=0.053m backtracking=0.00%
+ penalties=NONE
+/mnt/d/KIT (1)/KIT/3/walking_fast03_stageii.npz
+
+#21 SCORE=99.4 SIMPLE=YES
+ duration=3.48s frames=418 fps=120 speed=0.731m/s
+ displacement=2.541m straightness=0.9852 lateral95=0.039m backtracking=0.00%
+ penalties=NONE
+/mnt/d/KIT (1)/KIT/9/WalkingStraightForwards06_stageii.npz
+
+#22 SCORE=99.0 SIMPLE=YES
+ duration=4.28s frames=515 fps=120 speed=0.625m/s
+ displacement=2.675m straightness=0.9797 lateral95=0.046m backtracking=0.00%
+ penalties=NONE
+/mnt/d/KIT (1)/KIT/3/walking_fast06_stageii.npz
+
+#23 SCORE=98.9 SIMPLE=YES
+ duration=3.42s frames=411 fps=120 speed=0.886m/s
+ displacement=3.026m straightness=0.9863 lateral95=0.051m backtracking=0.00%
+ penalties=NONE
+/mnt/d/KIT (1)/KIT/359/walking_fast03_stageii.npz
+
+#24 SCORE=98.8 SIMPLE=YES
+ duration=4.20s frames=505 fps=120 speed=0.599m/s
+ displacement=2.517m straightness=0.9832 lateral95=0.044m backtracking=0.00%
+ penalties=NONE
+/mnt/d/KIT (1)/KIT/9/WalkingStraightForwards07_stageii.npz
+
+#25 SCORE=98.8 SIMPLE=YES
+ duration=3.15s frames=379 fps=120 speed=0.916m/s
+ displacement=2.887m straightness=0.9922 lateral95=0.047m backtracking=0.00%
+ penalties=NONE
+/mnt/d/KIT (1)/KIT/3/walking_fast05_stageii.npz
+
+#26 SCORE=98.6 SIMPLE=YES
+ duration=3.03s frames=365 fps=120 speed=0.978m/s
+ displacement=2.967m straightness=0.9946 lateral95=0.035m backtracking=0.00%
+ penalties=NONE
+/mnt/d/KIT (1)/KIT/424/walking_fast09_stageii.npz
+
+#27 SCORE=98.5 SIMPLE=YES
+ duration=4.30s frames=517 fps=120 speed=0.566m/s
+ displacement=2.433m straightness=0.9846 lateral95=0.045m backtracking=0.00%
+ penalties=NONE
+/mnt/d/KIT (1)/KIT/9/WalkingStraightForwards09_stageii.npz
+
+#28 SCORE=98.5 SIMPLE=YES
+ duration=3.26s frames=392 fps=120 speed=0.774m/s
+ displacement=2.521m straightness=0.9865 lateral95=0.041m backtracking=0.00%
+ penalties=NONE
+/mnt/d/KIT (1)/KIT/3/walking_medium10_stageii.npz
+
+#29 SCORE=98.2 SIMPLE=YES
+ duration=3.65s frames=439 fps=120 speed=0.830m/s
+ displacement=3.030m straightness=0.9818 lateral95=0.063m backtracking=0.00%
+ penalties=NONE
+/mnt/d/KIT (1)/KIT/359/walking_fast05_stageii.npz
+
+#30 SCORE=98.1 SIMPLE=YES
+ duration=4.61s frames=554 fps=120 speed=0.628m/s
+ displacement=2.893m straightness=0.9738 lateral95=0.067m backtracking=0.00%
+ penalties=NONE
+/mnt/d/KIT (1)/KIT/8/WalkingStraightForwards02_stageii.npz
+
+TOTAL MALE WALK CANDIDATES: 181

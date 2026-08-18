@@ -1,0 +1,12 @@
+{
+  "dataset": "experiments\\amass_b3_15dof_il\\processed\\g1_amass_b3_walk1_il_15dof.npz",
+  "out_model": "experiments\\amass_b3_15dof_il\\models\\g1_amass_b3_bc_walking_best.pt",
+  "best_epoch": 899,
+  "best_val_mse_rad2": 0.0003894803230650723,
+  "samples": 228,
+  "train_samples": 182,
+  "val_samples": 46,
+  "input_dim": 47,
+  "action_dim": 15,
+  "fps": 30.0
+}

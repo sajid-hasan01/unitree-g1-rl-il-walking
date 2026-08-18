@@ -115,6 +115,11 @@ def main():
     air_steps = 0
 
     with mujoco.viewer.launch_passive(env.model, env.data) as viewer:
+        viewer.cam.distance = 5.0
+        viewer.cam.azimuth = 140
+        viewer.cam.elevation = -20
+        viewer.cam.lookat[:] = [0.0, 0.0, 0.75]
+        viewer.sync()
         for step in range(args.max_steps):
             if not viewer.is_running():
                 break

@@ -1,0 +1,57 @@
+<mujoco model="stage3_line_perception">
+  <!--
+    Stage 3 perception-harness world (STATIONARY diagnostics only).
+
+    - Includes the real menagerie G1 (third_party/.../g1.xml) unmodified.
+    - Adds a painted GREEN polyline on a dark checker floor.
+    - Adds a world camera (targetbody@cam_focus) whose aim point is moved
+      at runtime by the harness so it always frames robot + line.
+
+    No locomotion code is touched by this file or by its harness.
+  -->
+  <include file="../../third_party/mujoco_menagerie/unitree_g1/g1.xml"/>
+
+  <asset>
+    <texture type="2d" name="lf_ground" builtin="checker"
+      rgb1="0.35 0.40 0.45" rgb2="0.22 0.27 0.32" width="300" height="300"/>
+    <material name="lf_groundmat" texture="lf_ground"
+      texuniform="true" texrepeat="12 12" reflectance="0.1"/>
+  </asset>
+
+  <worldbody>
+    <geom name="lf_floor" type="plane" size="10 10 0.01" material="lf_groundmat"/>
+
+    <!-- Painted line: 7 box segments forming a smooth left-curve. -->
+    <geom name="line_seg_0" type="box" size="0.5 0.045 0.004"
+      pos="0.50 0.015 0.004" quat="0.99989 0 0 0.015"
+      rgba="0.00 1.00 0.00 1.00" contype="0" conaffinity="0"/>
+    <geom name="line_seg_1" type="box" size="0.5 0.045 0.004"
+      pos="1.50 0.075 0.004" quat="0.99899 0 0 0.04488"
+      rgba="0.00 1.00 0.00 1.00" contype="0" conaffinity="0"/>
+    <geom name="line_seg_2" type="box" size="0.5 0.045 0.004"
+      pos="2.50 0.210 0.004" quat="0.99604 0 0 0.08894"
+      rgba="0.00 1.00 0.00 1.00" contype="0" conaffinity="0"/>
+    <geom name="line_seg_3" type="box" size="0.5 0.045 0.004"
+      pos="3.50 0.425 0.004" quat="0.99251 0 0 0.12217"
+      rgba="0.00 1.00 0.00 1.00" contype="0" conaffinity="0"/>
+    <geom name="line_seg_4" type="box" size="0.5 0.045 0.004"
+      pos="4.50 0.650 0.004" quat="0.99513 0 0 0.09855"
+      rgba="0.00 1.00 0.00 1.00" contype="0" conaffinity="0"/>
+    <geom name="line_seg_5" type="box" size="0.5 0.045 0.004"
+      pos="5.50 0.800 0.004" quat="0.99876 0 0 0.04983"
+      rgba="0.00 1.00 0.00 1.00" contype="0" conaffinity="0"/>
+    <geom name="line_seg_6" type="box" size="0.5 0.045 0.004"
+      pos="6.50 0.875 0.004" quat="0.99969 0 0 0.024997"
+      rgba="0.00 1.00 0.00 1.00" contype="0" conaffinity="0"/>
+
+    <!-- Runtime-repositionable aim target for the camera. -->
+    <body name="cam_focus" pos="0 0 0">
+      <freejoint name="cam_focus_joint"/>
+      <geom name="cam_focus_marker" type="sphere" size="0.005"
+        rgba="1 1 1 1" contype="0" conaffinity="0"/>
+    </body>
+
+    <camera name="headcam" mode="targetbody" target="cam_focus"
+      pos="0.0 -0.25 1.05" fovy="55"/>
+  </worldbody>
+</mujoco>

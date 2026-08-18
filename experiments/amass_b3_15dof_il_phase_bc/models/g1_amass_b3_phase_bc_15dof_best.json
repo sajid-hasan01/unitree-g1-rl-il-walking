@@ -1,0 +1,11 @@
+{
+  "dataset": "experiments\\amass_b3_15dof_il\\processed\\g1_amass_b3_walk1_il_15dof.npz",
+  "out_model": "experiments\\amass_b3_15dof_il_phase_bc\\models\\g1_amass_b3_phase_bc_15dof_best.pt",
+  "best_epoch": 7976,
+  "best_val_mse_rad2": 6.0109232435934246e-05,
+  "frames": 229,
+  "input_dim": 9,
+  "action_dim": 15,
+  "fps": 30.0,
+  "num_harmonics": 4
+}
