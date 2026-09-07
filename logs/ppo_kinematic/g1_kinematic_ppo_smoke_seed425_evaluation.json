@@ -1,0 +1,188 @@
+{
+  "model_path": "C:\\Users\\ASUS\\OneDrive\\Desktop\\CSE 499\\unitree-g1-rl-il-walking(OpenHE RL - Kinematic PPO)\\models\\ppo_kinematic\\g1_kinematic_ppo_smoke_seed425.zip",
+  "seed": 425,
+  "deterministic": true,
+  "evaluation_range": {
+    "start_step": 150,
+    "end_step": 750,
+    "states": 601,
+    "transitions": 600,
+    "residual_smoothing": 0.35,
+    "flat_distance_tolerance_m": 0.005
+  },
+  "fair_comparison_invariants": {
+    "max_step_difference": 0.0,
+    "max_motion_frame_difference": 0.0,
+    "max_world_x_difference": 0.0,
+    "max_flat_reference_difference": 0.0
+  },
+  "baseline_geometry": {
+    "num_frames": 601,
+    "num_sphere_samples": 4808,
+    "penetrating_frames": 531,
+    "penetrating_frame_rate": 0.8835274542429284,
+    "penetrating_sphere_samples": 1929,
+    "penetrating_sphere_rate": 0.4012063227953411,
+    "mean_penetration_depth_m": 0.02244852103058316,
+    "median_penetration_depth_m": 0.018542854115366936,
+    "max_penetration_depth_m": 0.0849267765879631,
+    "mean_frame_worst_penetration_m": 0.02816045305942335,
+    "deficit_frames": 579,
+    "deficit_frame_rate": 0.9633943427620633,
+    "deficit_sphere_samples": 3361,
+    "mean_positive_deficit_m": 0.030965105342822413,
+    "median_positive_deficit_m": 0.023888878878206014,
+    "max_deficit_m": 0.12499998964369297,
+    "mean_deficit_all_samples_m": 0.02164594822321675,
+    "mean_frame_max_deficit_m": 0.045499964490524014,
+    "mean_frame_mean_deficit_m": 0.02164594822321675,
+    "total_squared_deficit_m2": 5.084577922591304,
+    "groups": {
+      "left": {
+        "penetrating_samples": 1031,
+        "mean_penetration_depth_m": 0.02481880881122186,
+        "max_penetration_depth_m": 0.0849267765879631,
+        "deficit_samples": 1681,
+        "mean_deficit_m": 0.033171467610568904,
+        "max_deficit_m": 0.08833334024995565
+      },
+      "right": {
+        "penetrating_samples": 898,
+        "mean_penetration_depth_m": 0.019727177264616015,
+        "max_penetration_depth_m": 0.0748702883720398,
+        "deficit_samples": 1680,
+        "mean_deficit_m": 0.02875742976420226,
+        "max_deficit_m": 0.12499998964369297
+      },
+      "heel": {
+        "penetrating_samples": 488,
+        "mean_penetration_depth_m": 0.020848839035233005,
+        "max_penetration_depth_m": 0.060056451708078384,
+        "deficit_samples": 1613,
+        "mean_deficit_m": 0.03683451741542933,
+        "max_deficit_m": 0.12499998964369297
+      },
+      "toe": {
+        "penetrating_samples": 1441,
+        "mean_penetration_depth_m": 0.022990259277447057,
+        "max_penetration_depth_m": 0.0849267765879631,
+        "deficit_samples": 1748,
+        "mean_deficit_m": 0.025548994545845898,
+        "max_deficit_m": 0.08833334024995565
+      }
+    }
+  },
+  "ppo_geometry": {
+    "num_frames": 601,
+    "num_sphere_samples": 4808,
+    "penetrating_frames": 313,
+    "penetrating_frame_rate": 0.5207986688851913,
+    "penetrating_sphere_samples": 983,
+    "penetrating_sphere_rate": 0.20445091514143096,
+    "mean_penetration_depth_m": 0.020851426981731782,
+    "median_penetration_depth_m": 0.017550691962242126,
+    "max_penetration_depth_m": 0.06807558983564377,
+    "mean_frame_worst_penetration_m": 0.013410838650739129,
+    "deficit_frames": 405,
+    "deficit_frame_rate": 0.6738768718801996,
+    "deficit_sphere_samples": 1610,
+    "mean_positive_deficit_m": 0.02099292218600686,
+    "median_positive_deficit_m": 0.017237528348341583,
+    "max_deficit_m": 0.08878691762685775,
+    "mean_deficit_all_samples_m": 0.007029659883417439,
+    "mean_frame_max_deficit_m": 0.01768925374655825,
+    "mean_frame_mean_deficit_m": 0.007029659883417439,
+    "total_squared_deficit_m2": 1.136289378706039,
+    "groups": {
+      "left": {
+        "penetrating_samples": 322,
+        "mean_penetration_depth_m": 0.02534275183139437,
+        "max_penetration_depth_m": 0.05570327863097191,
+        "deficit_samples": 389,
+        "mean_deficit_m": 0.025559753269161538,
+        "max_deficit_m": 0.062315088585019114
+      },
+      "right": {
+        "penetrating_samples": 661,
+        "mean_penetration_depth_m": 0.018663519868885557,
+        "max_penetration_depth_m": 0.06807558983564377,
+        "deficit_samples": 1221,
+        "mean_deficit_m": 0.019537969449440792,
+        "max_deficit_m": 0.08878691762685775
+      },
+      "heel": {
+        "penetrating_samples": 204,
+        "mean_penetration_depth_m": 0.013727796279400697,
+        "max_penetration_depth_m": 0.0374571718275547,
+        "deficit_samples": 582,
+        "mean_deficit_m": 0.01903930761596387,
+        "max_deficit_m": 0.08878691762685775
+      },
+      "toe": {
+        "penetrating_samples": 779,
+        "mean_penetration_depth_m": 0.022716922056539923,
+        "max_penetration_depth_m": 0.06807558983564377,
+        "deficit_samples": 1028,
+        "mean_deficit_m": 0.022098956893949483,
+        "max_deficit_m": 0.06983701966702938
+      }
+    }
+  },
+  "baseline_policy_metrics": {
+    "mean_reward_per_transition": 0.4917634174192205,
+    "total_reward": 295.0580504515323,
+    "mean_abs_action": 0.0,
+    "rms_action": 0.0,
+    "max_abs_action": 0.0,
+    "mean_abs_residual_rad": 0.0,
+    "rms_residual_rad": 0.0,
+    "max_abs_residual_rad": 0.0,
+    "max_abs_normalized_residual": 0.0,
+    "mean_abs_residual_delta_rad": 0.0,
+    "rms_residual_delta_rad": 0.0,
+    "max_abs_residual_delta_rad": 0.0,
+    "mean_deficit_cost": 0.423530485483983,
+    "mean_baseline_deficit_cost": 0.423530485483983,
+    "mean_improvement": 0.0,
+    "mean_excess_cost": 0.0,
+    "mean_residual_cost": 0.0,
+    "mean_smoothness_cost": 0.0,
+    "mean_action_cost": 0.0,
+    "max_joint_clip_cost": 0.0
+  },
+  "ppo_policy_metrics": {
+    "mean_reward_per_transition": 1.0769240436551302,
+    "total_reward": 646.154426193078,
+    "mean_abs_action": 0.2650505541979995,
+    "rms_action": 0.329906154131432,
+    "max_abs_action": 0.8960838317871094,
+    "mean_abs_residual_rad": 0.07205793514480117,
+    "rms_residual_rad": 0.10508007532398768,
+    "max_abs_residual_rad": 0.3613183796405792,
+    "max_abs_normalized_residual": 0.891739591290967,
+    "mean_abs_residual_delta_rad": 0.0016049589171234402,
+    "rms_residual_delta_rad": 0.0028991980508868784,
+    "max_abs_residual_delta_rad": 0.07558606564998627,
+    "mean_deficit_cost": 0.0945064401602109,
+    "mean_baseline_deficit_cost": 0.423530485483983,
+    "mean_improvement": 0.32902404532377205,
+    "mean_excess_cost": 0.06593463729635478,
+    "mean_residual_cost": 0.10799076036084443,
+    "mean_smoothness_cost": 0.0001005159284045476,
+    "mean_action_cost": 0.10883807053379214,
+    "max_joint_clip_cost": 0.0
+  },
+  "comparison": {
+    "penetrating_frame_reduction_percent": 41.05461393596987,
+    "penetrating_sphere_sample_reduction_percent": 49.040953862104715,
+    "mean_penetration_depth_reduction_percent": 7.114473361855541,
+    "max_penetration_depth_reduction_percent": 19.84201853565663,
+    "deficit_frame_reduction_percent": 30.05181347150259,
+    "mean_all_sample_deficit_reduction_percent": 67.52436155290415,
+    "max_deficit_reduction_percent": 28.970460013684,
+    "total_squared_deficit_reduction_percent": 77.65223788473399,
+    "ppo_better_frames": 550,
+    "same_frames": 23,
+    "ppo_worse_frames": 28
+  }
+}

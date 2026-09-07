@@ -1,0 +1,97 @@
+{
+  "project": "RL and IL Based Walking, Balance, and Adaptive Terrain Control of Unitree G1 Humanoid Robot in MuJoCo",
+  "training_stage": "kinematic_residual_ppo_reward_v2_balanced_start",
+  "controlled_experiment": {
+    "reference_run": "v2_smoke_seed425",
+    "changed_variable": "random training start sampling only",
+    "reward_changed": false,
+    "observation_changed": false,
+    "action_space_changed": false,
+    "residual_scales_changed": false,
+    "residual_smoothing_changed": false,
+    "ppo_hyperparameters_changed": false,
+    "physics_changed": false
+  },
+  "policy": "MlpPolicy",
+  "timesteps_requested": 8192,
+  "seed": 425,
+  "device": "cpu",
+  "environment": {
+    "class": "G1KinematicUnevenEnv",
+    "source": "g1_kinematic_uneven_env_v2_balanced",
+    "base_reward_environment": "g1_kinematic_uneven_env_v2",
+    "observation_dim": 62,
+    "action_dim": 12,
+    "action_space": "normalized Box(-1, +1)",
+    "episode_length_max": 120,
+    "late_episodes_may_be_shorter": true,
+    "random_start": true,
+    "random_start_strategy": "uniform full-trajectory transition starts",
+    "balanced_start_min": 150,
+    "balanced_start_max": 749,
+    "train_start_step": 150,
+    "train_end_step": 750,
+    "residual_smoothing": 0.35,
+    "residual_scales_rad": [
+      0.44999998807907104,
+      0.15000000596046448,
+      0.15000000596046448,
+      0.30000001192092896,
+      0.3499999940395355,
+      0.07999999821186066,
+      0.44999998807907104,
+      0.15000000596046448,
+      0.15000000596046448,
+      0.30000001192092896,
+      0.3499999940395355,
+      0.07999999821186066
+    ],
+    "physics_step": false,
+    "mujoco_update": "mj_forward only",
+    "reward_version": "v2_unchanged",
+    "reward_hyperparameters": {
+      "flat_distance_tolerance_m": 0.005,
+      "deficit_scale_m": 0.05,
+      "penetration_scale_m": 0.05,
+      "deficit_weight": 1.8,
+      "improvement_weight": 0.0,
+      "penetration_weight": 8.0,
+      "excess_weight": 0.05,
+      "residual_weight": 0.03,
+      "smoothness_weight": 0.02,
+      "action_weight": 0.005,
+      "joint_clip_weight": 0.5
+    }
+  },
+  "ppo_hyperparameters": {
+    "learning_rate": 0.0003,
+    "n_steps": 512,
+    "batch_size": 128,
+    "n_epochs": 10,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "clip_range": 0.2,
+    "ent_coef": 0.0,
+    "vf_coef": 0.5,
+    "max_grad_norm": 0.5,
+    "target_kl": 0.03,
+    "policy_net_arch": [
+      128,
+      128
+    ]
+  },
+  "software": {
+    "python": "3.11.9",
+    "numpy": "2.4.6",
+    "torch": "2.13.0+cpu",
+    "mujoco": "3.10.0",
+    "gymnasium": "1.3.0",
+    "stable_baselines3": "2.9.0"
+  },
+  "training_result": {
+    "actual_timesteps": 8192,
+    "elapsed_seconds": 11.627765099983662,
+    "timesteps_per_second": 704.5205961385916,
+    "model_path": "C:\\Users\\ASUS\\OneDrive\\Desktop\\CSE 499\\unitree-g1-rl-il-walking(OpenHE RL - Kinematic PPO)\\models\\ppo_kinematic\\g1_kinematic_ppo_v2_balanced_smoke_seed425.zip"
+  }
+}
